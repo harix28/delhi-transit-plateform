@@ -1,0 +1,11 @@
+stop_id,stop_name,stop_lat,stop_lon
+ND,New Delhi Railway Station,28.6424,77.2195
+CP,Connaught Place,28.6315,77.2167
+PP,Patel Chowk,28.6228,77.2146
+IG,India Gate,28.6129,77.2295
+KH,Khan Market,28.6002,77.227
+JL,JLN Stadium,28.5906,77.2338
+LG,Lodhi Garden,28.5933,77.2197
+AI,AIIMS,28.5686,77.2077
+KB,Karol Bagh,28.6527,77.1908
+RK,Ramakrishna Ashram,28.639,77.2086

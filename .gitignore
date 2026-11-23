@@ -1,11 +1,18 @@
+# Virtual Environment & Python bytecode
 .venv/
 __pycache__/
 *.pyc
-.env
-data/raw/
-data/processed/
-outputs/
 .pytest_cache/
 .DS_Store
-data/demo/
-config.demo.yaml
+.env
+
+# Large Raw Ticket & GPS archives (Download from Transport Stack separately)
+data/raw/tickets/
+data/raw/gps/
+data/raw/gtfs/stop_times.txt
+data/raw/gtfs/shapes.txt
+
+# Large SQLite & heavy evaluation CSVs (>20MB)
+data/processed/schedule.sqlite
+outputs/segment_load.csv
+outputs/holdout_comparison.csv

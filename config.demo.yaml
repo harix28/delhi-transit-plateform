@@ -1,0 +1,28 @@
+crowding:
+  high_n: 20
+  med_n: 5
+  seated: 35
+  total: 70
+dataset: Synthetic Delhi demo
+journey:
+  dwell_min: 0.4
+  max_candidate_routes: 40
+  quiet_hour: 23
+  wait_min: 6
+  walk_kmh: 4.5
+  walk_max_m: 800
+load:
+  ci_z: 1.96
+  minutes_per_stop: 2.5
+  uplift: 1.0
+paths:
+  outputs: data/demo/outputs
+  processed: data/demo/processed
+  raw: data/demo/raw
+speed:
+  default_kmh: 15
+  max_kmh: 80
+  min_kmh: 3
+synthetic: true
+tickets:
+  trip_gap_min: 45

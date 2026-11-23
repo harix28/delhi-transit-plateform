@@ -1,0 +1,11 @@
+{
+  "ticket_rows": 2559899,
+  "missing_vehicle_rows": 1242167,
+  "vehicles": 6809,
+  "classifications": {
+    "ac": 5567,
+    "non-ac": 1064,
+    "unknown": 178
+  },
+  "basis": "October 2026 ticket declarations; at least 20 observations and 98% agreement; not current fleet verification"
+}

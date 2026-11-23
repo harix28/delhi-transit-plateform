@@ -25,12 +25,27 @@ IST = ZoneInfo("Asia/Kolkata")
 
 @asynccontextmanager
 async def lifespan(app):
-    global planner, startup_error
+    global planner, startup_error, cfg
     try:
         planner = JourneyPlanner(resolve(cfg, "processed"), cfg)
     except (FileNotFoundError, ValueError, KeyError, OSError) as exc:
         startup_error = str(exc)
-        logging.warning("Planner not ready: %s", exc)
+        logging.warning("Planner initial load failed: %s. Initiating automatic fallback...", exc)
+        try:
+            demo_processed = ROOT / "data/demo/processed"
+            demo_cfg_path = ROOT / "config.demo.yaml"
+            if not demo_processed.exists() or not (demo_processed / "stops.parquet").exists():
+                from scripts.create_demo import create_demo
+                create_demo()
+            if demo_cfg_path.exists():
+                demo_cfg = load_config(demo_cfg_path)
+                cfg.clear()
+                cfg.update(demo_cfg)
+                planner = JourneyPlanner(resolve(cfg, "processed"), cfg)
+                startup_error = None
+                logging.info("Self-healing successful! Demo transit planner active.")
+        except Exception as fallback_exc:
+            logging.error("Automatic fallback failed: %s", fallback_exc)
     yield
 
 app = FastAPI(title="Delhi Transit Intelligence", version="0.2.0", lifespan=lifespan)

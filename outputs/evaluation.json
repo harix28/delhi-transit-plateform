@@ -1,0 +1,28 @@
+{
+  "status": "complete",
+  "population": "tickets with a usable vehicle ID and valid journey fields",
+  "records": 1317662,
+  "matched_records": 891048,
+  "match_rate": 0.6762341177024154,
+  "cutoff": "2026-10-25",
+  "train_records": 1006493,
+  "test_records": 311169,
+  "test_bins": 849259,
+  "overlap_bins": 696838,
+  "evaluated_bins_min_5_trips_each": 78588,
+  "target": "held-out ticket-derived segment mean; NOT measured total occupancy",
+  "mae": 7.528671679465524,
+  "rmse": 10.535766238431206,
+  "level_agreement": 0.7281009823382705,
+  "train_label_distribution_evaluated": {
+    "seats": 47245,
+    "standing": 27722,
+    "crowded": 3621
+  },
+  "test_label_distribution_evaluated": {
+    "seats": 46964,
+    "standing": 26892,
+    "crowded": 4732
+  },
+  "interpretation_warning": "Class agreement can be trivial when sparse ticket samples all fall below capacity; it does not demonstrate crowding detection."
+}
