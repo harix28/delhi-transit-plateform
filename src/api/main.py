@@ -55,7 +55,38 @@ app.include_router(auth_router)
 origins = os.getenv("CORS_ORIGINS", "http://localhost:5500,http://127.0.0.1:5500").split(",")
 app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET"], allow_headers=["*"])
 
+def init_planner():
+    global planner, startup_error, cfg
+    try:
+        proc = resolve(cfg, "processed")
+        if proc.exists() and (proc / "stops.parquet").exists():
+            planner = JourneyPlanner(proc, cfg)
+            startup_error = None
+            return planner
+    except Exception as exc:
+        logging.warning("Primary planner init failed: %s", exc)
+
+    # Fallback to demo
+    try:
+        demo_cfg_path = ROOT / "config.demo.yaml"
+        if not (ROOT / "data/demo/processed/stops.parquet").exists():
+            from scripts.create_demo import create_demo
+            create_demo()
+        if demo_cfg_path.exists():
+            demo_cfg = load_config(demo_cfg_path)
+            cfg.clear()
+            cfg.update(demo_cfg)
+            planner = JourneyPlanner(resolve(cfg, "processed"), cfg)
+            startup_error = None
+            return planner
+    except Exception as exc:
+        logging.error("Demo fallback planner init failed: %s", exc)
+    return None
+
 def ready():
+    global planner
+    if planner is None:
+        planner = init_planner()
     if planner is None:
         raise HTTPException(503, "Transit data is not ready. Run the demo setup or real-data pipeline, then restart the API.")
     return planner
@@ -65,7 +96,8 @@ def records(df):
 
 @app.get("/health")
 def health():
-    return {"status": "ok" if planner is not None else "not_ready", "ready": planner is not None,
+    p = planner or init_planner()
+    return {"status": "ok" if p is not None else "not_ready", "ready": p is not None,
             "dataset": cfg.get("dataset", "local"), "synthetic": cfg.get("synthetic", False),
             "timezone": "Asia/Kolkata", "direct_routes_only": False}
 
@@ -100,10 +132,11 @@ def journeys(from_: str = Query(..., alias="from", min_length=1, max_length=200)
         origin, dest = p.resolve(from_), p.resolve(to)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+    num_opts = int(getattr(max_options, "default", 5)) if not isinstance(max_options, int) else int(max_options)
     return {"depart": depart.isoformat(), "mode": mode, "synthetic": cfg.get("synthetic", False),
             "origin": {"lat": origin[0], "lon": origin[1]},
             "destination": {"lat": dest[0], "lon": dest[1]},
-            "options": p.plan_with_transfer(origin, dest, depart, mode, max_options)}
+            "options": p.plan_with_transfer(origin, dest, depart, mode, num_opts)}
 
 @app.get("/crowding/route/{route}")
 def route_crowding(route: str, day_type: Literal["weekday", "weekend"] = "weekday",
