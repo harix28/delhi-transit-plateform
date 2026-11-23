@@ -1,0 +1,31 @@
+paths:
+  raw: data/raw
+  processed: data/processed
+  outputs: outputs
+
+tickets:
+  trip_gap_min: 45          # new bus trip if a vehicle has a gap longer than this (minutes)
+
+load:
+  minutes_per_stop: 2.5     # time offset per stop within a trip
+  uplift: 20.0              # Calibrated multiplier for missing riders (pass-holders, unrecorded boardings)
+  ci_z: 1.96
+
+crowding:
+  seated: 35                # seated capacity per bus
+  total: 65                 # comfortable total capacity per bus
+  high_n: 15                # trips needed for high confidence
+  med_n: 4                  # trips needed for medium confidence
+
+speed:
+  min_kmh: 3
+  max_kmh: 80
+  default_kmh: 15           # used when no speed data exists
+
+journey:
+  walk_max_m: 800
+  walk_kmh: 4.5
+  wait_min: 6               # PLACEHOLDER: average wait; replace with GTFS headways
+  dwell_min: 0.4            # per intermediate stop
+  quiet_hour: 23            # hour used for the "usual quieter time" comparison
+  max_candidate_routes: 40

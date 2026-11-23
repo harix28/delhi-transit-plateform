@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Delhi Transit">
+<meta name="theme-color" content="#f6f8f4">
+<title>Delhi Transit · Your city, connected</title>
+<meta name="description" content="Plan Delhi bus journeys, find nearby stops and follow live bus positions.">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/svg+xml" href="/assets/icon.svg">
+<link rel="apple-touch-icon" href="/assets/icon.svg">
+<link rel="stylesheet" href="/assets/styles.css?v=20261121-11">
+<link rel="stylesheet" href="/assets/redesign.css?v=20261122-2">
+</head>
+<body>
+
+<aside class="rail"><a class="brand" href="/" aria-label="Delhi Transit home">d<span>t</span></a><div class="rail-items"><button class="nav active" id="planner-nav" aria-label="Journey planner" title="Journey planner">⌕</button><button class="nav" id="network-nav" aria-label="Network insights" title="Network insights">▥</button><button class="nav" id="map-nav" aria-label="Route map" title="Route map">⌁</button><a class="nav" href="/docs" target="_blank" rel="noopener" aria-label="API documentation" title="API documentation">{ }</a></div><div class="rail-bottom">DELHI<br><span>TRANSIT</span></div></aside>
+
+<div class="app">
+  <!-- Animated Mobile Landing / Splash Screen (Light Mode) -->
+  <div id="app-splash" class="app-splash-screen" role="dialog" aria-modal="true" aria-label="Delhi Transit Welcome Splash">
+    <div class="splash-ambient-bg">
+      <div class="splash-blob b1"></div>
+      <div class="splash-blob b2"></div>
+      <div class="splash-grid-pattern"></div>
+    </div>
+    <div class="splash-center-content">
+      <div class="splash-logo-wrapper">
+        <div class="splash-halo-ring"></div>
+        <div class="splash-halo-ring secondary"></div>
+        <div class="splash-logo-card">
+          <svg class="splash-logo-svg" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect width="72" height="72" rx="20" fill="url(#splashBg)"/>
+            <g transform="translate(14, 12)">
+              <rect x="2" y="3" width="40" height="42" rx="10" fill="#1b5a40" stroke="#34d399" stroke-width="2.6"/>
+              <rect x="8" y="7" width="28" height="5" rx="2.5" fill="#34d399"/>
+              <rect x="6" y="15" width="32" height="13" rx="4" fill="#eaf6f0"/>
+              <circle cx="10" cy="35" r="3" fill="#fde047"/>
+              <circle cx="34" cy="35" r="3" fill="#fde047"/>
+              <rect x="16" y="34" width="12" height="3" rx="1.5" fill="#34d399"/>
+              <rect x="6" y="44" width="6" height="5" rx="2.5" fill="#0a1a13"/>
+              <rect x="32" y="44" width="6" height="5" rx="2.5" fill="#0a1a13"/>
+            </g>
+            <path d="M 6 36 A 30 30 0 0 1 12 24" stroke="#34d399" stroke-width="2.5" stroke-linecap="round" opacity="0.7"/>
+            <path d="M 66 36 A 30 30 0 0 0 60 24" stroke="#34d399" stroke-width="2.5" stroke-linecap="round" opacity="0.7"/>
+            <defs>
+              <linearGradient id="splashBg" x1="0" y1="0" x2="72" y2="72" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#18523c"/>
+                <stop offset="1" stop-color="#092017"/>
+              </linearGradient>
+            </defs>
+          </svg>
+        </div>
+      </div>
+
+      <div class="splash-typography">
+        <h1 class="splash-brand-title">
+          <span class="anim-word word-delhi">Delhi</span>
+          <span class="anim-word word-transit">Transit</span>
+        </h1>
+        <div class="splash-subtitle-wrap">
+          <p class="splash-brand-tagline">Delhi Bus Transit & Live Station Tracker</p>
+        </div>
+      </div>
+
+      <div class="splash-progress-container">
+        <div class="splash-track">
+          <div class="splash-bar"></div>
+        </div>
+        <span class="splash-loading-label">Connecting…</span>
+      </div>
+    </div>
+
+    <div class="splash-bottom-bar">
+      <span>Government of NCT of Delhi · Open Transit Stack</span>
+    </div>
+  </div>
+
+  <header>
+    <button id="profile-button" aria-label="Open profile" class="profile-avatar">♙</button>
+    <div class="wordmark">Delhi Transit</div>
+    <div class="header-right">
+      <button id="btn-install-pwa" class="btn-install-pwa" type="button" hidden title="Install Delhi Transit as an App">📲 Install</button>
+    </div>
+  </header>
+
+  <!-- Floating Active Ride Mode Banner -->
+  <div id="active-ride-banner" class="active-ride-banner" hidden>
+    <div class="ride-banner-left">
+      <span class="ride-pulse-live"></span>
+      <div class="ride-banner-text">
+        <strong id="ride-banner-title">Ride Mode Active</strong>
+        <small id="ride-banner-status">Tracking next stop…</small>
+      </div>
+    </div>
+    <div class="ride-banner-actions">
+      <button type="button" id="btn-ride-map" class="btn-ride-act" title="View road route on map">🗺️</button>
+      <button type="button" id="btn-exit-ride" class="btn-ride-act exit" title="End trip">✕</button>
+    </div>
+  </div>
+
+  <div class="workspace">
+    <main class="map-panel">
+      <section class="nearby-sheet" aria-label="Nearby bus stands">
+        <div id="screen-intro"></div>
+        <button id="search-back" type="button" aria-label="Back to home">‹ <span id="search-screen-title">Destination</span></button>
+        <section class="rider-home">
+          <!-- Live Bus / Route Number Search Card -->
+          <div class="bus-search-card" id="bus-search-card">
+            <div class="bus-search-badge-row">
+              <span class="bus-search-badge">LIVE TRACKER</span>
+              <span class="bus-search-hint">Find bus or route</span>
+            </div>
+            <div class="bus-search-input-wrap">
+              <span class="bus-search-icon">🔍</span>
+              <input id="bus-route-search" type="search" placeholder="Enter route or bus no. (e.g. 729, 502, DL1P…)" autocomplete="off" maxlength="40">
+              <button id="clear-bus-route-search" type="button" class="btn-clear-bus-search" hidden aria-label="Clear search">×</button>
+            </div>
+            <div id="bus-search-results" class="bus-search-results" aria-live="polite"></div>
+          </div>
+
+          <!-- Streamlined Journey Planner Card -->
+          <div class="journey-planner-card" id="journey-planner-card">
+            <div class="planner-card-header">
+              <span class="planner-kicker">PLAN BUS JOURNEY</span>
+            </div>
+
+            <!-- FROM tab in one whole line with anchored dropdown -->
+            <div class="route-field-wrapper" id="pickup-field-wrap">
+              <div class="route-input-line from-line">
+                <div class="line-dot-col">
+                  <span class="route-dot from-dot"></span>
+                </div>
+                <div class="line-field-col">
+                  <label for="pickup-search">FROM</label>
+                  <input id="pickup-search" placeholder="Enter pickup stop" autocomplete="off" maxlength="100">
+                </div>
+                <div class="line-action-col">
+                  <button id="fetch-location" type="button" class="btn-fetch-loc" title="Use current location" aria-label="Use current location">⌖</button>
+                </div>
+              </div>
+              <div id="pickup-results" class="autocomplete-dropdown" aria-live="polite"></div>
+            </div>
+
+            <!-- Connector & Swap Row -->
+            <div class="route-connector-row">
+              <div class="route-connector-line"></div>
+              <button id="swap-locations" type="button" class="swap-button" title="Swap From & To" aria-label="Swap pickup and destination">⇅</button>
+            </div>
+
+            <!-- TO tab in second whole line with anchored dropdown -->
+            <div class="route-field-wrapper" id="dest-field-wrap">
+              <div class="route-input-line to-line">
+                <div class="line-dot-col">
+                  <span class="route-dot to-dot"></span>
+                </div>
+                <div class="line-field-col">
+                  <label for="destination-search">TO</label>
+                  <input id="destination-search" placeholder="Where to? (Destination stop)" autocomplete="off" maxlength="100">
+                </div>
+                <div class="line-action-col">
+                  <span class="dest-icon">📍</span>
+                </div>
+              </div>
+              <div id="destination-results" class="autocomplete-dropdown" aria-live="polite"></div>
+            </div>
+
+            <span id="pickup-label" class="pickup-hint-text" aria-live="polite"></span>
+
+            <!-- Most Searched Routes by User (Replaces Popular Hubs) -->
+            <div class="user-routes-shortcuts-container" id="user-routes-box">
+              <div class="user-routes-header">
+                <span class="hub-title">MOST SEARCHED ROUTES</span>
+                <button type="button" id="clear-searched-routes" class="btn-text-clear" hidden>Clear</button>
+              </div>
+              <div class="searched-route-chips" id="mostly-searched-routes">
+                <!-- Dynamically populated with user's mostly searched routes -->
+              </div>
+            </div>
+
+            <!-- Buses type selection -->
+            <div class="planner-section-title">Bus Type:</div>
+            <fieldset class="bus-preferences">
+              <legend style="display:none">Bus preference</legend>
+              <label><input type="radio" name="bus-type" value="all" checked><span>▣ All Buses</span></label>
+              <label><input type="radio" name="bus-type" value="ac"><span>❄ AC</span></label>
+              <label><input type="radio" name="bus-type" value="non-ac"><span>▤ Non-AC</span></label>
+            </fieldset>
+
+            <!-- Date and Time -->
+            <div class="planner-datetime-row">
+              <label for="rider-departure">Departure Date & Time</label>
+              <input id="rider-departure" type="datetime-local" class="planner-datetime-input">
+            </div>
+
+            <!-- Priority -->
+            <div class="planner-priority-row">
+              <label for="journey-priority">Priority</label>
+              <select id="journey-priority" class="planner-priority-select" aria-label="Journey priority">
+                <option value="fastest">⚡ Fastest journey</option>
+                <option value="comfortable">🛋️ Most comfortable (Seats Likely)</option>
+              </select>
+            </div>
+
+            <!-- Find bus button -->
+            <button type="button" id="find-bus-btn" class="search-button btn-find-bus">Find Bus Journeys ›</button>
+
+            <!-- Results container -->
+            <section id="real-journey-results" aria-live="polite"></section>
+          </div>
+
+          <div class="recent-title"><h3>Recent destinations</h3><button id="clear-recents">Clear</button></div>
+          <div id="recent-destinations"></div>
+        </section>
+
+        <h2>Nearby Bus Stands</h2>
+        <p id="nearby-location">Stands serving routes around you.</p>
+        <div class="nearby-actions">
+          <button id="locate-me" type="button">Use my location</button>
+          <button id="demo-location" type="button">Search map area</button>
+        </div>
+        <div id="nearby-stands" aria-live="polite"></div>
+      </section>
+
+      <div id="map"></div>
+      <div class="map-controls">
+        <button id="toggle-hotspots" title="Toggle Crowding Hotspots" aria-label="Toggle Crowding Hotspots">🔥</button>
+        <button id="zoom-in" aria-label="Zoom in">+</button>
+        <button id="zoom-out" aria-label="Zoom out">−</button>
+        <button id="fit" aria-label="Fit network">⊡</button>
+      </div>
+    </main>
+  </div>
+
+  <!-- Where Is My Bus / Live Station Tracker Sheet -->
+  <section id="bus-tracker-sheet" class="bus-tracker-sheet" hidden aria-label="Live Bus Tracking">
+    <div class="tracker-header">
+      <button type="button" id="close-tracker-btn" class="tracker-back-btn">‹ Back</button>
+      <div class="tracker-title-box">
+        <div class="tracker-route-pill">
+          <span class="route-number-large" id="tracker-route-num">BUS</span>
+          <span class="tracker-ac-tag" id="tracker-ac-badge">❄ AC</span>
+        </div>
+        <p class="tracker-bus-reg" id="tracker-bus-reg">Live Bus Tracking</p>
+      </div>
+      <div class="tracker-header-actions">
+        <button type="button" id="btn-start-ride-from-tracker" class="btn-start-ride-tracker" title="Start live ride navigation">🚀 Start Ride</button>
+        <button type="button" id="tracker-refresh-btn" class="tracker-refresh-btn" title="Refresh bus position" aria-label="Refresh live bus position">
+          <span class="refresh-spin-icon">↻</span>
+          <span>Refresh</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="tracker-status-card" id="tracker-status-card">
+      <div class="tracker-status-icon">📍</div>
+      <div class="tracker-status-info">
+        <small>CURRENT STATION</small>
+        <h3 id="tracker-current-station">Locating current station…</h3>
+        <span class="tracker-next-eta" id="tracker-next-eta">Live along route</span>
+      </div>
+    </div>
+
+    <!-- All Running Buses of this Route Number & Nearest Bus Recommendation -->
+    <div class="tracker-fleet-card" id="tracker-fleet-card">
+      <div class="tracker-fleet-header">
+        <span class="fleet-kicker">RUNNING BUSES ON THIS ROUTE</span>
+        <span class="fleet-count-badge" id="tracker-fleet-count">0 active</span>
+      </div>
+      <div class="fleet-bus-chips" id="tracker-fleet-chips">
+        <!-- Rendered dynamically: Nearest bus first with "⭐ NEAREST TO YOU" badge, plus other active buses -->
+      </div>
+    </div>
+
+    <div class="tracker-stations-container">
+      <div class="tracker-timeline-title">Route Station Timeline</div>
+      <div class="stations-timeline" id="stations-timeline-list">
+        <!-- Stations rendered dynamically -->
+      </div>
+    </div>
+  </section>
+</div>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/assets/rider.js?v=20261122-2" defer></script><script src="/assets/mobile-flow.js?v=20261122-2" defer></script>
+<dialog id="profile-dialog"><form method="dialog"><button class="close-profile" aria-label="Close profile">×</button></form><div class="profile-avatar">♙</div><h2>Your rider profile</h2><p>Preferences and recent destinations are stored on this device.</p><label for="rider-name">Your name</label><input id="rider-name" maxlength="40" placeholder="Enter your name"><button id="save-profile" class="search-button">Save profile</button><p id="profile-status" aria-live="polite"></p></dialog>
+
+<!-- Digital Delhi Bus Ticket Modal (Chartr / One Delhi style) -->
+<dialog id="digital-ticket-modal" class="digital-ticket-dialog">
+  <div class="ticket-modal-card">
+    <div class="ticket-top-brand">
+      <div class="dtc-logo-wrap">
+        <span class="dtc-symbol">🚌</span>
+        <div>
+          <strong>GOVT. OF NCT OF DELHI</strong>
+          <small>Delhi Transport Corporation · E-Ticket</small>
+        </div>
+      </div>
+      <button type="button" id="close-ticket-modal" class="close-ticket-btn" aria-label="Close ticket">×</button>
+    </div>
+
+    <div class="ticket-pass-selector">
+      <label class="pass-opt">
+        <input type="radio" name="pass-type" value="standard" checked>
+        <span>🎟️ Paid Ticket</span>
+      </label>
+      <label class="pass-opt pink">
+        <input type="radio" name="pass-type" value="pink">
+        <span>🌸 Free Pink Pass (Women)</span>
+      </label>
+    </div>
+
+    <div class="ticket-body" id="ticket-printable-body">
+      <div class="ticket-route-strip">
+        <span class="ticket-rt-num" id="ticket-route-num">BUS</span>
+        <span class="ticket-type-tag" id="ticket-bus-type-tag">Standard / Non-AC</span>
+      </div>
+
+      <div class="ticket-stops-flow">
+        <div class="t-stop">
+          <span class="t-dot from"></span>
+          <div>
+            <small>FROM (BOARDING)</small>
+            <strong id="ticket-from-stop">Boarding Stop</strong>
+          </div>
+        </div>
+        <div class="t-connector">↓</div>
+        <div class="t-stop">
+          <span class="t-dot to"></span>
+          <div>
+            <small>TO (DESTINATION)</small>
+            <strong id="ticket-to-stop">Destination Stop</strong>
+          </div>
+        </div>
+      </div>
+
+      <div class="ticket-meta-grid">
+        <div><small>FARE AMOUNT</small><strong id="ticket-fare-val" class="ticket-fare">₹15</strong></div>
+        <div><small>PASSENGERS</small><strong>1 Adult</strong></div>
+        <div><small>BOOKING TIME</small><strong id="ticket-booking-time">Just now</strong></div>
+        <div><small>VALIDITY</small><strong id="ticket-validity-timer">Valid for 2h</strong></div>
+      </div>
+
+      <!-- Scanable Animated QR Code simulation -->
+      <div class="ticket-qr-container">
+        <div class="qr-code-box">
+          <div class="qr-matrix-sim">
+            <div class="qr-corner top-left"></div>
+            <div class="qr-corner top-right"></div>
+            <div class="qr-corner bottom-left"></div>
+            <div class="qr-scan-line"></div>
+            <span class="qr-center-logo">DTC</span>
+          </div>
+        </div>
+        <p class="qr-helper-text">Show QR code to conductor / marshal upon inspection</p>
+      </div>
+
+      <div class="ticket-security-footer">
+        <span class="security-seal">🔒 DTC VERIFIED E-TICKET · AAPKI SEVA MEIN</span>
+        <code id="ticket-hash-code">TKT-DEL-2026-98421</code>
+      </div>
+    </div>
+
+    <button type="button" id="btn-save-ticket-close" class="btn-done-ticket">Done & Keep Ticket</button>
+  </div>
+</dialog>
+
+<!-- Alighting Alert Overlay (Phone Vibrates + Chimes) -->
+<div id="alighting-alert-overlay" class="alighting-alert-overlay" hidden>
+  <div class="alighting-card">
+    <div class="alighting-bell-pulse">🔔</div>
+    <h2>GET READY TO ALIGHT!</h2>
+    <p id="alighting-stop-name">Your destination stop is approaching next</p>
+    <span class="alighting-dist-badge" id="alighting-dist-badge">~450m away</span>
+    <button type="button" id="btn-dismiss-alight-alert" class="btn-dismiss-alight">I'm Ready / Dismiss</button>
+  </div>
+</div>
+
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(err => console.warn('SW register error:', err));
+  });
+}
+</script>
+</body>
+</html>

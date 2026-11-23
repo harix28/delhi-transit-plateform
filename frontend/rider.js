@@ -1,0 +1,1573 @@
+const $ = id => document.getElementById(id);
+const safeSetText = (id, text) => { const el = $(id); if (el) el.textContent = text; };
+const element = (tag, text) => { const e = document.createElement(tag); e.textContent = text; return e; };
+async function get(url) { const r = await fetch(url); const body = await r.json(); if (!r.ok) throw Error(typeof body.detail === 'string' ? body.detail : 'Data temporarily unavailable'); return body; }
+document.querySelector('.app').classList.add('map-mode');
+safeSetText('dataset-pill', 'Live GPS'); safeSetText('data-notice', 'Data: Delhi Transport Stack · Map: OpenStreetMap');
+safeSetText('map-headline', 'Delhi buses, live'); safeSetText('map-description', 'Loading latest positions…');
+if ($('planner-nav')) $('planner-nav').hidden = true; if ($('network-nav')) $('network-nav').hidden = true;
+if ($('map-nav')) { $('map-nav').classList.add('active'); $('map-nav').onclick = () => map.invalidateSize(); }
+const box = document.createElement('div'); box.id = 'street-map'; $('map').replaceWith(box);
+const map = L.map(box, { zoomControl: false, preferCanvas: true }).setView([28.6315, 77.2167], 13);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap contributors' }).addTo(map);
+const buses = L.layerGroup().addTo(map), stands = L.layerGroup().addTo(map), paths = L.layerGroup().addTo(map), hotspots = L.layerGroup().addTo(map);
+let vehicles = [], filter = null, sequence = 0; let activeBusType = 'all'; let hotspotsActive = false;
+
+function haversineM(lat1, lon1, lat2, lon2) {
+  const R = 6371e3;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// Where Is My Bus: Dedicated Live Route Station Tracker
+let currentTrackedVehicle = null;
+let currentTrackedRouteId = null;
+let currentTrackedRouteName = null;
+let currentTrackedSegments = null;
+let showRouteOnMapGlobal = null;
+
+async function openBusTracker(vehicle, routeId, routeName, segments) {
+  currentTrackedVehicle = vehicle;
+  currentTrackedRouteId = routeId;
+  currentTrackedRouteName = routeName;
+  if (segments !== undefined) currentTrackedSegments = segments;
+
+  const sheet = $('bus-tracker-sheet');
+  if (!sheet) return;
+  sheet.hidden = false;
+  sheet.scrollTop = 0;
+
+  const routeCode = routeName || (vehicle && vehicle.route_id) || routeId || 'BUS';
+  const busId = (vehicle && vehicle.id) ? ('Bus ' + vehicle.id) : ('Route ' + routeCode);
+  const isAC = vehicle && vehicle.bus_type === 'ac';
+
+  safeSetText('tracker-route-num', routeCode);
+  const acBadge = $('tracker-ac-badge');
+  if (acBadge) acBadge.style.display = isAC ? 'inline-block' : 'none';
+
+  const regEl = $('tracker-bus-reg');
+  if (regEl) {
+    if (vehicle && vehicle.timestamp) {
+      const timeStr = new Date(vehicle.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      regEl.textContent = `${busId} · Updated ${timeStr}`;
+    } else {
+      regEl.textContent = `${busId} · Live Station Tracker`;
+    }
+  }
+
+  const currentStationEl = $('tracker-current-station');
+  const nextEtaEl = $('tracker-next-eta');
+  const listEl = $('stations-timeline-list');
+
+  if (currentStationEl) currentStationEl.textContent = 'Locating current station…';
+  if (nextEtaEl) nextEtaEl.textContent = 'Tracking route progression…';
+  if (listEl) listEl.innerHTML = '<div class="timeline-loading-spinner" style="padding:28px 16px;text-align:center;color:#64748b;font-size:13px;">Loading route stations…</div>';
+
+  try {
+    const queryRoute = routeId || routeCode;
+    const data = await get('/transit/routes/' + encodeURIComponent(queryRoute) + '/stops');
+    const stops = data.stops || [];
+
+    if (!stops.length) {
+      if (currentStationEl) currentStationEl.textContent = 'Route details available';
+      if (nextEtaEl) nextEtaEl.textContent = 'No sequential stops found for this corridor.';
+      if (listEl) listEl.innerHTML = '<div style="padding:24px;text-align:center;color:#64748b;">Station list is currently unavailable for this corridor.</div>';
+      return;
+    }
+
+    // Filter all active buses on this route
+    const cleanQ = String(queryRoute).trim().toUpperCase();
+    const cleanC = String(routeCode).trim().toUpperCase();
+    const activeRouteBuses = vehicles.filter(v =>
+      !v.stale && (
+        v.route_id === cleanQ ||
+        v.route_id === cleanC ||
+        (v.route_id && String(v.route_id).toUpperCase() === cleanQ) ||
+        (v.route_id && String(v.route_id).toUpperCase() === cleanC)
+      )
+    );
+
+    // Reference point: pickup coordinates or user location
+    let refLat = 28.6315, refLon = 77.2167;
+    if (window.selectedPickupCoordinates) {
+      [refLat, refLon] = window.selectedPickupCoordinates.split(',').map(Number);
+    } else if (window.pickupCoordinates) {
+      [refLat, refLon] = window.pickupCoordinates.split(',').map(Number);
+    }
+
+    // Sort active buses by proximity to the pickup/user location
+    activeRouteBuses.sort((a, b) => {
+      const da = haversineM(refLat, refLon, a.lat, a.lon);
+      const db = haversineM(refLat, refLon, b.lat, b.lon);
+      return da - db;
+    });
+
+    const nearestBus = activeRouteBuses.length > 0 ? activeRouteBuses[0] : null;
+
+    if (!vehicle && nearestBus) {
+      vehicle = nearestBus;
+      currentTrackedVehicle = nearestBus;
+    }
+
+    // Update fleet chips in the UI
+    const fleetChipsEl = $('tracker-fleet-chips');
+    const fleetCountEl = $('tracker-fleet-count');
+    if (fleetCountEl) {
+      fleetCountEl.textContent = activeRouteBuses.length + (activeRouteBuses.length === 1 ? ' active bus' : ' active buses');
+    }
+
+    if (fleetChipsEl) {
+      fleetChipsEl.replaceChildren();
+      if (!activeRouteBuses.length) {
+        fleetChipsEl.innerHTML = '<p class="fleet-empty-note">No live GPS broadcast right now. Showing scheduled route stops.</p>';
+      } else {
+        activeRouteBuses.forEach((b, idx) => {
+          const isNearest = idx === 0;
+          const isSelected = vehicle && (vehicle.id === b.id);
+          const distToUser = haversineM(refLat, refLon, b.lat, b.lon);
+          const distLabel = distToUser < 1000 ? Math.round(distToUser) + 'm' : (distToUser / 1000).toFixed(1) + ' km';
+          const isAC = b.bus_type === 'ac';
+
+          const chip = element('div', '');
+          chip.className = `fleet-bus-chip ${isNearest ? 'nearest' : ''} ${isSelected ? 'selected' : ''}`;
+          chip.innerHTML = `
+            <div class="fleet-chip-top">
+              <span class="fleet-bus-id">${isAC ? '❄ ' : '🚌 '}Bus #${b.id}</span>
+              ${isNearest ? '<span class="nearest-badge">⭐ NEAREST TO YOU</span>' : ''}
+              ${isSelected ? '<span class="tracking-badge">● Tracking</span>' : ''}
+            </div>
+            <div class="fleet-chip-bottom">
+              <span>📍 ~${distLabel} from pickup</span>
+              <span>⚡ Live GPS</span>
+            </div>
+          `;
+
+          chip.onclick = () => {
+            openBusTracker(b, routeId, routeName, currentTrackedSegments);
+          };
+
+          fleetChipsEl.append(chip);
+        });
+      }
+    }
+
+    let currentIdx = 0;
+    let minDist = Infinity;
+
+    if (vehicle && vehicle.lat && vehicle.lon) {
+      stops.forEach((s, idx) => {
+        const d = haversineM(vehicle.lat, vehicle.lon, s.stop_lat, s.stop_lon);
+        if (d < minDist) {
+          minDist = d;
+          currentIdx = idx;
+        }
+      });
+    } else {
+      const matchBus = vehicles.find(v => !v.stale && (v.route_id === queryRoute || v.route_id === routeCode));
+      if (matchBus) {
+        vehicle = matchBus;
+        stops.forEach((s, idx) => {
+          const d = haversineM(matchBus.lat, matchBus.lon, s.stop_lat, s.stop_lon);
+          if (d < minDist) {
+            minDist = d;
+            currentIdx = idx;
+          }
+        });
+      }
+    }
+
+    const currentStop = stops[currentIdx];
+    if (currentStationEl) currentStationEl.textContent = currentStop.stop_name;
+
+    if (nextEtaEl) {
+      if (minDist < 120) {
+        nextEtaEl.innerHTML = `<span class="eta-pill here">● Bus is at this stop</span> · Stop ${currentIdx + 1} of ${stops.length}`;
+      } else if (minDist < 600) {
+        nextEtaEl.innerHTML = `<span class="eta-pill arriving">● Approaching station</span> (~${Math.round(minDist)}m) · Stop ${currentIdx + 1} of ${stops.length}`;
+      } else if (minDist < Infinity) {
+        nextEtaEl.innerHTML = `<span class="eta-pill enroute">● Between stops</span> (~${(minDist / 1000).toFixed(1)} km away) · Stop ${currentIdx + 1} of ${stops.length}`;
+      } else {
+        nextEtaEl.innerHTML = `Stop 1 of ${stops.length} · ${stops.length} stops along route`;
+      }
+    }
+
+    if (listEl) {
+      listEl.replaceChildren();
+
+      // Build crowd level lookup from journey segments if available
+      const crowdMap = new Map();
+      if (Array.isArray(currentTrackedSegments)) {
+        currentTrackedSegments.forEach(seg => {
+          if (seg.from) crowdMap.set(String(seg.from).trim().toLowerCase(), seg.level);
+          if (seg.to) crowdMap.set(String(seg.to).trim().toLowerCase(), seg.level);
+        });
+      }
+
+      stops.forEach((stop, idx) => {
+        const isPassed = idx < currentIdx;
+        const isCurrent = idx === currentIdx;
+        const isUpcoming = idx > currentIdx;
+
+        const node = element('div', '');
+        node.className = `station-node ${isPassed ? 'passed' : ''} ${isCurrent ? 'current' : ''} ${isUpcoming ? 'upcoming' : ''}`;
+        if (isCurrent) node.id = 'current-station-node';
+
+        // Track column with line and indicator
+        const trackCol = element('div', '');
+        trackCol.className = 'station-track-col';
+
+        const lineTop = element('div', '');
+        lineTop.className = `station-track-line top ${idx === 0 ? 'hidden' : ''} ${isPassed || isCurrent ? 'passed-line' : ''}`;
+
+        const pinWrapper = element('div', '');
+        pinWrapper.className = 'station-pin-wrap';
+        if (isCurrent) {
+          pinWrapper.innerHTML = `<div class="station-bus-pin" title="Bus is here"><span class="pin-bus-icon">🚌</span></div>`;
+        } else if (isPassed) {
+          pinWrapper.innerHTML = `<div class="station-check-dot">✓</div>`;
+        } else {
+          pinWrapper.innerHTML = `<div class="station-upcoming-dot"></div>`;
+        }
+
+        const lineBottom = element('div', '');
+        lineBottom.className = `station-track-line bottom ${idx === stops.length - 1 ? 'hidden' : ''} ${isPassed ? 'passed-line' : ''}`;
+
+        trackCol.append(lineTop, pinWrapper, lineBottom);
+
+        // Details column
+        const detailsCol = element('div', '');
+        detailsCol.className = 'station-details-col';
+
+        const titleRow = element('div', '');
+        titleRow.className = 'station-title-row';
+
+        const nameEl = element('h4', stop.stop_name);
+        nameEl.className = 'station-name';
+        titleRow.append(nameEl);
+
+        const stopKey = String(stop.stop_name).trim().toLowerCase();
+        const crowdLvl = crowdMap.get(stopKey);
+        let crowdPill = '';
+        if (crowdLvl) {
+          const lbl = crowdLvl === 'seats' ? 'Seats likely' : (crowdLvl === 'standing' ? 'Standing' : 'Crowded');
+          crowdPill = `<span class="station-crowd-tag ${crowdLvl}">● ${lbl}</span>`;
+        }
+
+        const badgesWrap = element('div', '');
+        badgesWrap.className = 'station-badges-wrap';
+        if (crowdPill) {
+          const cSpan = document.createElement('span');
+          cSpan.innerHTML = crowdPill;
+          badgesWrap.append(cSpan);
+        }
+
+        if (isCurrent) {
+          const badge = element('span', 'HERE NOW');
+          badge.className = 'station-status-pill current-pill';
+          badgesWrap.append(badge);
+        } else if (isPassed) {
+          const badge = element('span', 'Departed');
+          badge.className = 'station-status-pill passed-pill';
+          badgesWrap.append(badge);
+        }
+        titleRow.append(badgesWrap);
+
+        const metaRow = element('div', '');
+        metaRow.className = 'station-meta-row';
+        const seqText = `Stop ${idx + 1}`;
+        let distText = '';
+        if (isCurrent) {
+          distText = minDist < 150 ? '· At platform' : `· ~${Math.round(minDist)}m`;
+        } else if (isUpcoming && minDist < Infinity) {
+          const stopsAway = idx - currentIdx;
+          distText = `· ~${stopsAway * 3} min away`;
+        }
+        metaRow.append(element('span', `${seqText} ${distText}`));
+
+        // Departures timetable expandable toggle
+        const depToggle = element('button', 'Scheduled departures ›');
+        depToggle.type = 'button';
+        depToggle.className = 'btn-station-times';
+
+        const depContainer = element('div', '');
+        depContainer.className = 'station-departures-box';
+        depContainer.hidden = true;
+
+        depToggle.onclick = async (e) => {
+          e.stopPropagation();
+          if (!depContainer.hidden) {
+            depContainer.hidden = true;
+            depToggle.textContent = 'Scheduled departures ›';
+            return;
+          }
+          depContainer.hidden = false;
+          depToggle.textContent = 'Hide departures ‹';
+          depContainer.innerHTML = '<div style="font-size:11.5px;color:#64748b;">Checking departures…</div>';
+          try {
+            const res = await get('/transit/stops/' + encodeURIComponent(stop.stop_id) + '/departures');
+            depContainer.replaceChildren();
+            if (!res.departures || !res.departures.length) {
+              depContainer.append(element('p', 'No scheduled departures in the next 2 hours.'));
+            } else {
+              res.departures.slice(0, 6).forEach(dep => {
+                const row = element('div', '');
+                row.className = 'mini-dep-row';
+                row.innerHTML = `<strong>Route ${dep.route}</strong><span>In ${Math.ceil(dep.minutes)} min</span>`;
+                depContainer.append(row);
+              });
+            }
+          } catch (err) {
+            depContainer.textContent = 'Departures unavailable';
+          }
+        };
+
+        detailsCol.append(titleRow, metaRow, depToggle, depContainer);
+        node.append(trackCol, detailsCol);
+        listEl.append(node);
+      });
+
+      // Auto-scroll to current station
+      setTimeout(() => {
+        const curr = $('current-station-node');
+        if (curr) {
+          curr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 250);
+
+      // Bind Start Ride from tracker sheet
+      const startRideFromTrackerBtn = $('btn-start-ride-from-tracker');
+      if (startRideFromTrackerBtn) {
+        startRideFromTrackerBtn.onclick = () => {
+          const sheet = $('bus-tracker-sheet');
+          if (sheet) sheet.hidden = true;
+          stopAutoTrackerPolling();
+          startRideMode({
+            route: routeCode,
+            board: stops[0] ? { name: stops[0].stop_name, lat: stops[0].stop_lat, lon: stops[0].stop_lon } : { name: 'Origin' },
+            alight: stops[stops.length - 1] ? { name: stops[stops.length - 1].stop_name, lat: stops[stops.length - 1].stop_lat, lon: stops[stops.length - 1].stop_lon } : { name: 'Destination' },
+            stations: stops.map((s, idx) => ({ name: s.stop_name, lat: s.stop_lat, lon: s.stop_lon, seq: idx + 1 })),
+            geometry: stops.map(s => [s.stop_lat, s.stop_lon])
+          });
+        };
+      }
+
+      startAutoTrackerPolling();
+    }
+  } catch (err) {
+    if (currentStationEl) currentStationEl.textContent = 'Route details';
+    if (nextEtaEl) nextEtaEl.textContent = 'Timeline will update when route details are loaded.';
+    if (listEl) listEl.innerHTML = `<div style="padding:24px;text-align:center;color:#64748b;">Could not load station timeline: ${err.message}</div>`;
+  }
+}
+
+// -------------------------------------------------------------
+// Auto-Streaming Live Bus Tracker (Smooth Background Polling)
+// -------------------------------------------------------------
+let trackerAutoTimer = null;
+
+function startAutoTrackerPolling() {
+  stopAutoTrackerPolling();
+  trackerAutoTimer = setInterval(async () => {
+    const sheet = $('bus-tracker-sheet');
+    if (!sheet || sheet.hidden) {
+      stopAutoTrackerPolling();
+      return;
+    }
+    try {
+      const d = await get('/vehicles');
+      vehicles = d.vehicles || [];
+      paint();
+      if (currentTrackedVehicle && currentTrackedVehicle.id) {
+        const found = vehicles.find(v => v.id === currentTrackedVehicle.id);
+        if (found) currentTrackedVehicle = found;
+      } else if (currentTrackedRouteId || currentTrackedRouteName) {
+        const rCode = currentTrackedRouteName || currentTrackedRouteId;
+        const found = vehicles.find(v => !v.stale && (v.route_id === currentTrackedRouteId || v.route_id === rCode));
+        if (found) currentTrackedVehicle = found;
+      }
+      await openBusTracker(currentTrackedVehicle, currentTrackedRouteId, currentTrackedRouteName, currentTrackedSegments);
+    } catch (_) {}
+  }, 12000);
+}
+
+function stopAutoTrackerPolling() {
+  if (trackerAutoTimer) {
+    clearInterval(trackerAutoTimer);
+    trackerAutoTimer = null;
+  }
+}
+
+const closeTrackerBtn = $('close-tracker-btn');
+if (closeTrackerBtn) {
+  closeTrackerBtn.onclick = () => {
+    const sheet = $('bus-tracker-sheet');
+    if (sheet) sheet.hidden = true;
+    stopAutoTrackerPolling();
+  };
+}
+
+const trackerRefreshBtn = $('tracker-refresh-btn');
+if (trackerRefreshBtn) {
+  trackerRefreshBtn.onclick = async () => {
+    trackerRefreshBtn.classList.add('refreshing');
+    try {
+      const d = await get('/vehicles');
+      vehicles = d.vehicles || [];
+      paint();
+      if (currentTrackedVehicle && currentTrackedVehicle.id) {
+        const found = vehicles.find(v => v.id === currentTrackedVehicle.id);
+        if (found) currentTrackedVehicle = found;
+      } else if (currentTrackedRouteId || currentTrackedRouteName) {
+        const rCode = currentTrackedRouteName || currentTrackedRouteId;
+        const found = vehicles.find(v => !v.stale && (v.route_id === currentTrackedRouteId || v.route_id === rCode));
+        if (found) currentTrackedVehicle = found;
+      }
+      await openBusTracker(currentTrackedVehicle, currentTrackedRouteId, currentTrackedRouteName, currentTrackedSegments);
+    } catch (err) {
+      console.warn('Tracker refresh error:', err);
+    } finally {
+      setTimeout(() => trackerRefreshBtn.classList.remove('refreshing'), 450);
+    }
+  };
+}
+
+// -------------------------------------------------------------
+// PWA Install Prompt Listener
+// -------------------------------------------------------------
+let deferredPwaPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredPwaPrompt = e;
+  const installBtn = $('btn-install-pwa');
+  if (installBtn) {
+    installBtn.hidden = false;
+    installBtn.onclick = async () => {
+      installBtn.hidden = true;
+      if (deferredPwaPrompt) {
+        deferredPwaPrompt.prompt();
+        await deferredPwaPrompt.userChoice;
+        deferredPwaPrompt = null;
+      }
+    };
+  }
+});
+
+window.addEventListener('appinstalled', () => {
+  const installBtn = $('btn-install-pwa');
+  if (installBtn) installBtn.hidden = true;
+  deferredPwaPrompt = null;
+});
+
+// -------------------------------------------------------------
+// DTC Fare Calculator Helper (Delhi Transit Fares)
+// -------------------------------------------------------------
+function calculateDTCFare(distanceKm, busType) {
+  const isAC = busType === 'ac';
+  let standardFare = 15;
+  let acFare = 25;
+  const d = Math.max(distanceKm || 0, 1);
+
+  if (d <= 4) {
+    standardFare = 5;
+    acFare = 10;
+  } else if (d <= 10) {
+    standardFare = 10;
+    acFare = d <= 8 ? 15 : 20;
+  } else {
+    standardFare = 15;
+    acFare = 25;
+  }
+
+  return {
+    standard: standardFare,
+    ac: acFare,
+    fare: isAC ? acFare : standardFare,
+    pink: 0
+  };
+}
+
+// -------------------------------------------------------------
+// Digital Bus Ticket Modal Controller (Chartr / One Delhi Style)
+// -------------------------------------------------------------
+let currentTicketData = null;
+
+function openDigitalTicket(routeCode, fromStop, toStop, fareObj, isAC) {
+  const modal = $('digital-ticket-modal');
+  if (!modal) return;
+  currentTicketData = { routeCode, fromStop, toStop, fareObj, isAC };
+
+  safeSetText('ticket-route-num', routeCode || 'BUS');
+  safeSetText('ticket-bus-type-tag', isAC ? '❄ Electric AC Bus' : 'Standard Non-AC Bus');
+  safeSetText('ticket-from-stop', fromStop || 'Boarding Stop');
+  safeSetText('ticket-to-stop', toStop || 'Destination Stop');
+  
+  const initialFare = isAC ? fareObj.ac : fareObj.standard;
+  safeSetText('ticket-fare-val', '₹' + initialFare);
+  safeSetText('ticket-booking-time', new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ', Today');
+  safeSetText('ticket-hash-code', 'DTC-DEL-' + Math.floor(100000 + Math.random() * 900000));
+
+  const standardRadio = document.querySelector('input[name="pass-type"][value="standard"]');
+  if (standardRadio) standardRadio.checked = true;
+
+  document.querySelectorAll('input[name="pass-type"]').forEach(r => {
+    r.onchange = () => {
+      const isPink = r.value === 'pink';
+      const fareEl = $('ticket-fare-val');
+      if (fareEl) {
+        fareEl.textContent = isPink ? 'FREE' : ('₹' + (isAC ? fareObj.ac : fareObj.standard));
+        fareEl.style.color = isPink ? '#be185d' : '#15803d';
+      }
+    };
+  });
+
+  modal.showModal();
+}
+
+const closeTicketBtn = $('close-ticket-modal');
+if (closeTicketBtn) closeTicketBtn.onclick = () => $('digital-ticket-modal').close();
+const saveTicketCloseBtn = $('btn-save-ticket-close');
+if (saveTicketCloseBtn) saveTicketCloseBtn.onclick = () => $('digital-ticket-modal').close();
+
+// -------------------------------------------------------------
+// Active Ride Mode & Alighting Alerts
+// -------------------------------------------------------------
+let activeRide = null;
+let rideWatchId = null;
+let hasAlertedAlighting = false;
+
+function playAlightingChime() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+    osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.15); // A5
+    gain.gain.setValueAtTime(0.3, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.6);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.65);
+  } catch (_) {}
+}
+
+function startRideMode(journeyOption) {
+  activeRide = journeyOption;
+  hasAlertedAlighting = false;
+  const banner = $('active-ride-banner');
+  if (banner) banner.hidden = false;
+
+  safeSetText('ride-banner-title', `🚍 On Route ${journeyOption.route}`);
+  safeSetText('ride-banner-status', `Heading to ${journeyOption.alight.name}`);
+
+  if (navigator.geolocation) {
+    if (rideWatchId !== null) navigator.geolocation.clearWatch(rideWatchId);
+    rideWatchId = navigator.geolocation.watchPosition(pos => {
+      if (!activeRide) return;
+      const userLat = pos.coords.latitude;
+      const userLon = pos.coords.longitude;
+      const destLat = activeRide.alight.lat;
+      const destLon = activeRide.alight.lon;
+
+      const distM = haversineM(userLat, userLon, destLat, destLon);
+      const distLabel = distM < 1000 ? Math.round(distM) + 'm' : (distM / 1000).toFixed(1) + ' km';
+      safeSetText('ride-banner-status', `~${distLabel} to ${activeRide.alight.name}`);
+
+      // Alighting alert threshold: within 800m of destination
+      if (distM <= 800 && !hasAlertedAlighting) {
+        hasAlertedAlighting = true;
+        triggerAlightingAlert(activeRide.alight.name, Math.round(distM));
+      }
+    }, () => {}, { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 });
+  }
+}
+
+function triggerAlightingAlert(stopName, distM) {
+  if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 500]);
+  playAlightingChime();
+
+  const overlay = $('alighting-alert-overlay');
+  if (overlay) {
+    safeSetText('alighting-stop-name', `Approaching ${stopName}`);
+    safeSetText('alighting-dist-badge', `~${distM}m away`);
+    overlay.hidden = false;
+  }
+}
+
+function exitRideMode() {
+  activeRide = null;
+  if (rideWatchId !== null) {
+    navigator.geolocation.clearWatch(rideWatchId);
+    rideWatchId = null;
+  }
+  const banner = $('active-ride-banner');
+  if (banner) banner.hidden = true;
+}
+
+const exitRideBtn = $('btn-exit-ride');
+if (exitRideBtn) exitRideBtn.onclick = exitRideMode;
+
+const rideMapBtn = $('btn-ride-map');
+if (rideMapBtn) {
+  rideMapBtn.onclick = () => {
+    if (activeRide && typeof showRouteOnMapGlobal === 'function') {
+      showRouteOnMapGlobal(activeRide);
+    }
+  };
+}
+
+const dismissAlightBtn = $('btn-dismiss-alight-alert');
+if (dismissAlightBtn) {
+  dismissAlightBtn.onclick = () => {
+    const overlay = $('alighting-alert-overlay');
+    if (overlay) overlay.hidden = true;
+  };
+}
+
+// Live Bus & Route Number Search Controller
+const busSearchInput = $('bus-route-search');
+const clearBusSearchBtn = $('clear-bus-route-search');
+const busSearchResults = $('bus-search-results');
+let busSearchTimer = null;
+let busSearchVer = 0;
+
+if (busSearchInput && busSearchResults) {
+  busSearchInput.oninput = () => {
+    clearTimeout(busSearchTimer);
+    const q = busSearchInput.value.trim().toUpperCase();
+    const ver = ++busSearchVer;
+    if (clearBusSearchBtn) clearBusSearchBtn.hidden = !q.length;
+    if (q.length < 1) {
+      busSearchResults.replaceChildren();
+      return;
+    }
+
+    busSearchTimer = setTimeout(async () => {
+      try {
+        // 1. Live buses client-side match
+        const liveMatches = vehicles.filter(v =>
+          !v.stale && (
+            (v.id && String(v.id).toUpperCase().includes(q)) ||
+            (v.route_id && String(v.route_id).toUpperCase().includes(q))
+          )
+        ).slice(0, 4);
+
+        // 2. Network routes search from backend API
+        let routeMatches = [];
+        try {
+          const res = await get('/transit/routes/search?q=' + encodeURIComponent(q));
+          routeMatches = res.routes || [];
+        } catch (_) { }
+
+        if (ver !== busSearchVer) return;
+        busSearchResults.replaceChildren();
+
+        if (!liveMatches.length && !routeMatches.length) {
+          const emptyMsg = element('p', 'No matching buses or routes found.');
+          emptyMsg.className = 'search-empty-text';
+          busSearchResults.append(emptyMsg);
+          return;
+        }
+
+        // Live bus matches section
+        if (liveMatches.length > 0) {
+          const liveTitle = element('div', '● Live Running Buses');
+          liveTitle.className = 'search-results-section-header live';
+          busSearchResults.append(liveTitle);
+
+          liveMatches.forEach(v => {
+            const isAC = v.bus_type === 'ac';
+            const item = element('div', '');
+            item.className = 'bus-search-item';
+            item.innerHTML = `
+              <div class="search-item-left">
+                <span class="search-rt-pill ${isAC ? 'ac' : ''}">${v.route_id || 'BUS'}</span>
+                <div class="search-item-texts">
+                  <strong>Bus #${v.id}</strong>
+                  <small>${isAC ? '❄ AC Electric' : 'Standard'} · Active live</small>
+                </div>
+              </div>
+              <button type="button" class="btn-track-action">Track Station ➔</button>
+            `;
+            item.onclick = () => {
+              busSearchResults.replaceChildren();
+              busSearchInput.value = '';
+              if (clearBusSearchBtn) clearBusSearchBtn.hidden = true;
+              if (typeof recordUserSearchedRoute === 'function') recordUserSearchedRoute(v.route_id, 'Bus #' + v.id);
+              openBusTracker(v, v.route_id, v.route_id);
+            };
+            busSearchResults.append(item);
+          });
+        }
+
+        // Route corridors section
+        if (routeMatches.length > 0) {
+          const routesTitle = element('div', 'Route Corridors');
+          routesTitle.className = 'search-results-section-header';
+          busSearchResults.append(routesTitle);
+
+          routeMatches.forEach(r => {
+            const activeBus = vehicles.find(v => !v.stale && (v.route_id === r.route_id || v.route_id === r.route_short_name));
+            const item = element('div', '');
+            item.className = 'bus-search-item';
+            item.innerHTML = `
+              <div class="search-item-left">
+                <span class="search-rt-pill">${r.route_short_name || r.route_id}</span>
+                <div class="search-item-texts">
+                  <strong>${r.route_desc || r.route_long_name || ('Route ' + r.route_short_name)}</strong>
+                  <small>${activeBus ? '● Active bus running' : 'Scheduled route'}</small>
+                </div>
+              </div>
+              <button type="button" class="btn-track-action">Track Route ➔</button>
+            `;
+            item.onclick = () => {
+              busSearchResults.replaceChildren();
+              busSearchInput.value = '';
+              if (clearBusSearchBtn) clearBusSearchBtn.hidden = true;
+              if (typeof recordUserSearchedRoute === 'function') recordUserSearchedRoute(r.route_short_name || r.route_id, r.route_desc);
+              openBusTracker(activeBus, r.route_id, r.route_short_name);
+            };
+            busSearchResults.append(item);
+          });
+        }
+      } catch (err) {
+        if (ver === busSearchVer) {
+          busSearchResults.textContent = 'Search unavailable: ' + err.message;
+        }
+      }
+    }, 200);
+  };
+
+  if (clearBusSearchBtn) {
+    clearBusSearchBtn.onclick = () => {
+      busSearchInput.value = '';
+      clearBusSearchBtn.hidden = true;
+      busSearchResults.replaceChildren();
+      busSearchInput.focus();
+    };
+  }
+}
+
+// Native Animated Splash Landing Screen Controller
+const splashEl = $('app-splash');
+if (splashEl) {
+  const label = splashEl.querySelector('.splash-loading-label');
+  setTimeout(() => { if (label) label.textContent = 'Connecting routes and stops…'; }, 500);
+  setTimeout(() => { if (label) label.textContent = 'Updating bus positions…'; }, 1000);
+  setTimeout(() => { if (label) label.textContent = 'Ready!'; }, 1500);
+
+  function dismissSplash() {
+    if (!splashEl || splashEl.classList.contains('dismissed')) return;
+    splashEl.classList.add('dismissed');
+    setTimeout(() => {
+      splashEl.remove();
+      if (typeof map !== 'undefined' && map && map.invalidateSize) map.invalidateSize();
+    }, 550);
+  }
+
+  const splashTimer = setTimeout(dismissSplash, 1900);
+  splashEl.addEventListener('click', dismissSplash);
+}
+
+const activeBusMarkers = new Map();
+
+function paint() {
+  const bounds = map.getBounds();
+  const zoom = map.getZoom();
+  const fresh = vehicles.filter(v => !v.stale && (activeBusType === 'all' || v.bus_type === activeBusType) && (!filter || v.route_id === filter));
+  const visibleIds = new Set();
+
+  fresh.filter(v => bounds.contains([v.lat, v.lon])).forEach(v => {
+    visibleIds.add(v.id);
+    const isAC = v.bus_type === 'ac';
+    const typeLabel = isAC ? '❄ Electric AC' : (v.bus_type === 'non-ac' ? 'Standard Non-AC' : 'DTC Bus');
+    const updateTime = v.timestamp ? new Date(v.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Just now';
+
+    let html, size, anchor;
+    if (zoom >= 13) {
+      html = `<div class="simple-bus-pill ${isAC ? 'ac' : ''}"><span class="bus-icon">🚌</span><span class="pill-rt">${v.route_id || 'BUS'}</span></div>`;
+      size = [64, 24]; anchor = [32, 12];
+    } else {
+      html = `<span class="simple-bus-dot ${isAC ? 'ac' : ''}" aria-hidden="true"></span>`;
+      size = [16, 16]; anchor = [8, 8];
+    }
+
+    const popupHtml = `
+      <div class="bus-popup-header">
+        <span class="bus-popup-badge ${isAC ? 'ac' : ''}">${v.route_id || 'BUS'}</span>
+        <strong>${v.id}</strong>
+      </div>
+      <p class="bus-popup-meta">${typeLabel} · ${updateTime}</p>
+      <button type="button" class="bus-track-action-btn">Track Station by Station ➔</button>
+    `;
+
+    if (activeBusMarkers.has(v.id)) {
+      const marker = activeBusMarkers.get(v.id);
+      marker.setLatLng([v.lat, v.lon]);
+      marker.setIcon(L.divIcon({ className: 'simple-bus-marker-wrap', html: html, iconSize: size, iconAnchor: anchor }));
+      const p = marker.getPopup();
+      if (p) p.setContent(popupHtml);
+    } else {
+      const marker = L.marker([v.lat, v.lon], {
+        icon: L.divIcon({ className: 'simple-bus-marker-wrap', html: html, iconSize: size, iconAnchor: anchor }),
+        title: 'Bus ' + v.id + ' Route ' + (v.route_id || ''),
+        alt: 'Bus ' + v.id
+      });
+
+      const p = element('div', '');
+      p.className = 'bus-popup-card';
+      p.innerHTML = popupHtml;
+
+      p.onclick = (e) => {
+        if (e.target.closest('.bus-track-action-btn')) {
+          e.stopPropagation();
+          openBusTracker(v, v.route_id, v.route_id);
+        }
+      };
+
+      marker.bindPopup(p);
+      marker.on('click', () => {
+        openBusTracker(v, v.route_id, v.route_id);
+      });
+
+      marker.addTo(buses);
+      activeBusMarkers.set(v.id, marker);
+    }
+  });
+
+  for (const [id, marker] of activeBusMarkers.entries()) {
+    if (!visibleIds.has(id)) {
+      buses.removeLayer(marker);
+      activeBusMarkers.delete(id);
+    }
+  }
+}
+
+async function refresh() {
+  try {
+    const d = await get('/vehicles');
+    vehicles = d.vehicles || [];
+    paint();
+  } catch (e) {
+    vehicles = []; paint();
+  }
+}
+map.on('moveend', paint);
+
+async function nearby(lat, lon) {
+  const id = ++sequence;
+  safeSetText('nearby-location', 'Finding nearby stops…');
+  try {
+    const d = await get('/transit/stops?' + new URLSearchParams({ lat, lon }));
+    if (id !== sequence) return;
+    stands.clearLayers();
+    const host = $('nearby-stands');
+    if (!host) return;
+    host.replaceChildren();
+    safeSetText('nearby-location', 'Within 2 km · distances measured in a straight line');
+    if (!d.stops.length) {
+      host.append(element('p', 'No stops nearby. Try another area on the map.'));
+      return;
+    }
+    d.stops.forEach((s, index) => {
+      L.circleMarker([s.lat, s.lon], {
+        radius: 6,
+        color: '#164c36',
+        fillColor: '#ffffff',
+        fillOpacity: 1,
+        weight: 2.5
+      }).bindPopup(element('strong', s.name)).addTo(stands);
+
+      const card = element('article', ''); card.className = 'nearby-stop';
+      const header = element('div', ''); header.className = 'stop-heading';
+      const title = element('div', ''); title.append(element('small', index === 0 ? 'NEAREST STOP' : 'BUS STAND'), element('h3', s.name));
+      const distance = element('span', s.distance_m >= 1000 ? (s.distance_m / 1000).toFixed(1) + ' km' : Math.round(s.distance_m) + ' m'); distance.className = 'stop-distance';
+      header.append(title, distance); card.append(header);
+      const count = element('p', s.routes.length + ' routes serve this stop'); count.className = 'stop-caption'; card.append(count);
+      const list = element('div', ''); list.className = 'stop-routes';
+      const status = element('p', ''); status.className = 'stop-status'; status.setAttribute('role', 'status');
+
+      s.routes.forEach((r, i) => {
+        const code = r.route_short_name || r.route_id;
+        const activeBus = vehicles.find(v => !v.stale && (v.route_id === r.route_id || v.route_id === code));
+
+        const row = element('div', '');
+        row.className = 'stop-route-wrapper';
+        row.hidden = i >= 4;
+
+        const button = element('button', ''); button.type = 'button'; button.className = 'stop-route'; button.setAttribute('aria-pressed', 'false');
+        const badge = element('span', code); badge.className = 'route-number';
+        const detail = element('span', ''); detail.className = 'route-description';
+        detail.append(
+          element('strong', r.route_long_name && r.route_long_name !== code ? r.route_long_name : 'Bus route ' + code),
+          element('small', activeBus ? '● Bus running nearby' : 'View route on map')
+        );
+        const arrow = element('span', '↗'); arrow.setAttribute('aria-hidden', 'true'); button.append(badge, detail, arrow);
+
+        button.onclick = async () => {
+          filter = r.route_id; paint(); paths.clearLayers();
+          host.querySelectorAll('.stop-route').forEach(row => row.setAttribute('aria-pressed', String(row === button)));
+          safeSetText('map-headline', 'Route ' + code); status.textContent = 'Loading route…';
+          try {
+            const shape = await get('/transit/routes/' + encodeURIComponent(r.route_id));
+            if (filter !== r.route_id) return;
+            shape.paths.forEach(p => L.polyline(p, { color: '#15735a', weight: 4 }).addTo(paths));
+            status.textContent = shape.paths.length ? 'Route highlighted on the map.' : 'Route corridor loaded.';
+          } catch (e) { if (filter === r.route_id) status.textContent = 'Route shape unavailable.'; }
+        };
+
+        const trackBtn = element('button', 'Track Bus ›');
+        trackBtn.type = 'button';
+        trackBtn.className = 'btn-track-route-bus';
+        trackBtn.title = 'Track bus station by station';
+        trackBtn.onclick = (e) => {
+          e.stopPropagation();
+          openBusTracker(activeBus, r.route_id, code);
+        };
+
+        row.append(button, trackBtn);
+        list.append(row);
+      });
+      card.append(list);
+
+      if (s.routes.length > 4) {
+        const more = element('button', 'Show all ' + s.routes.length + ' routes'); more.type = 'button'; more.className = 'stop-expand'; more.setAttribute('aria-expanded', 'false');
+        more.onclick = () => { const expanded = more.getAttribute('aria-expanded') !== 'true'; more.setAttribute('aria-expanded', String(expanded));[...list.children].forEach((row, i) => row.hidden = !expanded && i >= 4); more.textContent = expanded ? 'Show fewer routes' : 'Show all ' + s.routes.length + ' routes'; }; card.append(more);
+      }
+      card.append(status);
+
+      const times = element('button', 'Scheduled departures'); times.type = 'button'; times.className = 'stop-timetable'; times.setAttribute('aria-expanded', 'false');
+      const departureRows = element('div', ''); departureRows.className = 'stop-departures'; departureRows.hidden = true; departureRows.setAttribute('aria-live', 'polite');
+      times.onclick = async () => {
+        if (!departureRows.hidden) { departureRows.hidden = true; times.setAttribute('aria-expanded', 'false'); return; }
+        departureRows.hidden = false; times.setAttribute('aria-expanded', 'true'); times.disabled = true; departureRows.textContent = 'Checking timetable…';
+        try {
+          const result = await get('/transit/stops/' + encodeURIComponent(s.id) + '/departures');
+          departureRows.replaceChildren(element('small', 'Timetable departures'));
+          if (!result.departures.length) departureRows.append(element('p', 'No scheduled departures in the next two hours.'));
+          result.departures.forEach(t => { const row = element('div', ''); row.className = 'departure-row'; row.append(element('strong', t.route), element('span', 'In ' + Math.ceil(t.minutes) + ' min')); departureRows.append(row); });
+        } catch (e) { departureRows.textContent = e.message; } finally { times.disabled = false; }
+      };
+      card.append(times, departureRows); host.append(card);
+    });
+  } catch (e) { if (id === sequence) safeSetText('nearby-location', e.message); }
+}
+$('locate-me').onclick = () => { if (!navigator.geolocation) return; $('nearby-location').textContent = 'Requesting your location…'; navigator.geolocation.getCurrentPosition(p => { map.setView([p.coords.latitude, p.coords.longitude], 15); nearby(p.coords.latitude, p.coords.longitude); }, () => { $('nearby-location').textContent = 'Location unavailable. Tap the map to choose a location.'; }, { timeout: 12000 }); };
+$('demo-location').textContent = 'Search map area'; $('demo-location').onclick = () => { filter = null; paths.clearLayers(); paint(); const c = map.getCenter(); nearby(c.lat, c.lng); }; map.on('click', e => nearby(e.latlng.lat, e.latlng.lng));
+$('zoom-in').onclick = () => map.zoomIn(); $('zoom-out').onclick = () => map.zoomOut(); $('fit').onclick = () => { filter = null; paths.clearLayers(); map.setView([28.6315, 77.2167], 13); paint(); };
+refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 30000); nearby(28.6315, 77.2167);
+const readSaved = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } };
+const saveLocal = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch { return false; } };
+let recent = readSaved('transit.recents', []); if (!Array.isArray(recent)) recent = [];
+let destinationMarker = null;
+function selectDestination(s) {
+  window.destinationCoordinates = s.stop_lat + ',' + s.stop_lon;
+  window.destinationName = s.stop_name;
+  $('destination-search').value = s.stop_name;
+  $('destination-results').replaceChildren();
+  recent = [s, ...recent.filter(x => x.stop_id !== s.stop_id)].slice(0, 5);
+  saveLocal('transit.recents', recent);
+  renderRecent();
+  if (destinationMarker) map.removeLayer(destinationMarker);
+  destinationMarker = L.marker([s.stop_lat, s.stop_lon]).addTo(map).bindPopup(element('strong', s.stop_name)).openPopup();
+  map.setView([s.stop_lat, s.stop_lon], 15);
+  nearby(s.stop_lat, s.stop_lon);
+  safeSetText('map-headline', 'Destination: ' + s.stop_name);
+  $('pickup-label').textContent = pickupText;
+}
+function renderRecent() {
+  const host = $('recent-destinations'); host.replaceChildren();
+  $('clear-recents').hidden = !recent.length;
+  if (!recent.length) host.append(element('p', 'Your searched destinations will appear here.'));
+  recent.forEach(s => {
+    if (!s || !s.stop_name) return;
+    const b = element('button', '◷  ' + s.stop_name);
+    b.className = 'recent-item';
+    b.onclick = () => selectDestination(s);
+    host.append(b);
+  });
+}
+let searchTimer, searchVersion = 0;
+$('destination-search').oninput = () => {
+  clearTimeout(searchTimer);
+  const q = $('destination-search').value.trim(), version = ++searchVersion;
+  $('destination-results').replaceChildren();
+  if (q.length < 2) return;
+  searchTimer = setTimeout(async () => {
+    try {
+      const d = await get('/transit/search?q=' + encodeURIComponent(q));
+      if (version !== searchVersion) return;
+      const host = $('destination-results'); host.replaceChildren();
+      if (!d.stops.length) host.append(element('p', 'No matching bus stops found.'));
+      d.stops.forEach(s => {
+        const b = element('button', s.stop_name);
+        b.className = 'destination-option';
+        b.onclick = () => { searchVersion++; selectDestination(s); };
+        host.append(b);
+      });
+    } catch { $('destination-results').textContent = 'Search unavailable. Please try again.'; }
+  }, 250);
+};
+$('clear-recents').onclick = () => { recent = []; saveLocal('transit.recents', recent); renderRecent(); };
+let pickupText = 'Fetch my location';
+let pickupTimer, pickupVersion = 0, pickupMarker = null;
+$('pickup-search').oninput = () => {
+  clearTimeout(pickupTimer); const q = $('pickup-search').value.trim(), version = ++pickupVersion;
+  $('pickup-results').replaceChildren(); $('pickup-label').textContent = 'Select a matching pickup stop';
+  if (q.length < 2) return;
+  pickupTimer = setTimeout(async () => {
+    try {
+      const d = await get('/transit/search?q=' + encodeURIComponent(q));
+      if (version !== pickupVersion) return;
+      const host = $('pickup-results'); host.replaceChildren();
+      if (!d.stops.length) host.append(element('p', 'No matching stops. Try another stop name.'));
+      d.stops.forEach(s => {
+        const b = element('button', s.stop_name); b.className = 'destination-option'; b.type = 'button';
+        b.onclick = () => {
+          pickupVersion++; window.selectedPickupCoordinates = s.stop_lat + ',' + s.stop_lon;
+          window.selectedPickupName = s.stop_name; pickupText = s.stop_name;
+          $('pickup-search').value = s.stop_name; $('pickup-label').textContent = 'Pickup selected';
+          host.replaceChildren();
+          if (pickupMarker) map.removeLayer(pickupMarker);
+          pickupMarker = L.circleMarker([s.stop_lat, s.stop_lon], { radius: 9, color: '#fff', fillColor: '#10b981', fillOpacity: 1, weight: 3 }).addTo(map).bindPopup(element('strong', 'Pickup: ' + s.stop_name));
+          map.setView([s.stop_lat, s.stop_lon], 15); nearby(s.stop_lat, s.stop_lon);
+        };
+        host.append(b);
+      });
+    } catch { if (version === pickupVersion) $('pickup-results').textContent = 'Pickup search unavailable. Please try again.'; }
+  }, 250);
+};
+const fetchPickup = () => {
+  if (!navigator.geolocation) { $('pickup-label').textContent = 'Location unavailable'; return; }
+  $('pickup-label').textContent = 'Finding you…';
+  navigator.geolocation.getCurrentPosition(p => {
+    window.pickupCoordinates = p.coords.latitude + ',' + p.coords.longitude;
+    pickupText = 'Current location'; $('pickup-search').value = 'Current location';
+    $('pickup-results').replaceChildren(); $('pickup-label').textContent = pickupText;
+    map.setView([p.coords.latitude, p.coords.longitude], 15);
+    if (pickupMarker) map.removeLayer(pickupMarker);
+    pickupMarker = L.circleMarker([p.coords.latitude, p.coords.longitude], { radius: 9, color: '#fff', fillColor: '#10b981', fillOpacity: 1, weight: 3 }).addTo(map).bindPopup('Your location');
+    nearby(p.coords.latitude, p.coords.longitude);
+  }, () => { $('pickup-label').textContent = 'Location denied or unavailable'; }, { timeout: 12000, maximumAge: 30000 });
+};
+$('fetch-location').onclick = $('locate-me').onclick = () => { pickupVersion++; clearTimeout(pickupTimer); $('pickup-results').replaceChildren(); fetchPickup(); };
+
+// Smart Swap Origin & Destination
+const swapBtn = $('swap-locations');
+if (swapBtn) {
+  swapBtn.onclick = () => {
+    swapBtn.classList.add('rotating');
+    setTimeout(() => swapBtn.classList.remove('rotating'), 350);
+    const prevPickVal = $('pickup-search').value;
+    const prevDestVal = $('destination-search').value;
+    const prevPickCoord = window.selectedPickupCoordinates || window.pickupCoordinates;
+    const prevPickName = window.selectedPickupName;
+    const prevDestCoord = window.destinationCoordinates;
+    const prevDestName = window.destinationName;
+
+    $('pickup-search').value = prevDestVal;
+    $('destination-search').value = prevPickVal;
+
+    window.selectedPickupCoordinates = prevDestCoord;
+    window.selectedPickupName = prevDestName;
+    window.destinationCoordinates = prevPickCoord;
+    window.destinationName = prevPickName;
+
+    if (window.selectedPickupName) $('pickup-label').textContent = 'Pickup selected';
+    if (window.selectedPickupCoordinates) {
+      const [plat, plon] = window.selectedPickupCoordinates.split(',').map(Number);
+      if (pickupMarker) map.removeLayer(pickupMarker);
+      pickupMarker = L.circleMarker([plat, plon], { radius: 9, color: '#fff', fillColor: '#10b981', fillOpacity: 1, weight: 3 }).addTo(map).bindPopup(element('strong', 'Pickup: ' + (window.selectedPickupName || '')));
+      nearby(plat, plon);
+    }
+    if (window.destinationCoordinates) {
+      const [dlat, dlon] = window.destinationCoordinates.split(',').map(Number);
+      if (destinationMarker) map.removeLayer(destinationMarker);
+      destinationMarker = L.marker([dlat, dlon]).addTo(map).bindPopup(element('strong', window.destinationName || '')).openPopup();
+    }
+  };
+}
+
+// Most Searched Routes by User Controller
+let userSearchedRoutes = readSaved('transit.userSearchedRoutes', []);
+if (!Array.isArray(userSearchedRoutes)) userSearchedRoutes = [];
+
+function recordUserSearchedRoute(routeCode, routeDesc) {
+  if (!routeCode) return;
+  const cleanCode = String(routeCode).trim().toUpperCase();
+  const existingIdx = userSearchedRoutes.findIndex(r => r.code === cleanCode);
+  if (existingIdx >= 0) {
+    userSearchedRoutes[existingIdx].count = (userSearchedRoutes[existingIdx].count || 1) + 1;
+    userSearchedRoutes[existingIdx].lastUsed = Date.now();
+    if (routeDesc && !userSearchedRoutes[existingIdx].desc) {
+      userSearchedRoutes[existingIdx].desc = routeDesc;
+    }
+    const item = userSearchedRoutes.splice(existingIdx, 1)[0];
+    userSearchedRoutes.unshift(item);
+  } else {
+    userSearchedRoutes.unshift({
+      code: cleanCode,
+      desc: routeDesc || ('Route ' + cleanCode),
+      count: 1,
+      lastUsed: Date.now()
+    });
+  }
+  userSearchedRoutes = userSearchedRoutes.slice(0, 10);
+  saveLocal('transit.userSearchedRoutes', userSearchedRoutes);
+  renderMostSearchedRoutes();
+}
+
+function renderMostSearchedRoutes() {
+  const container = $('mostly-searched-routes');
+  const clearBtn = $('clear-searched-routes');
+  if (!container) return;
+  container.replaceChildren();
+
+  if (userSearchedRoutes && userSearchedRoutes.length > 0) {
+    if (clearBtn) clearBtn.hidden = false;
+    userSearchedRoutes.forEach(r => {
+      const btn = element('button', '');
+      btn.type = 'button';
+      btn.className = 'searched-route-chip';
+      btn.innerHTML = `<span class="chip-rt-badge">${r.code}</span><span class="chip-desc">${r.desc || r.code}</span>`;
+      btn.onclick = () => {
+        recordUserSearchedRoute(r.code, r.desc);
+        const activeBus = vehicles.find(v => !v.stale && (v.route_id === r.code));
+        openBusTracker(activeBus, r.code, r.code);
+      };
+      container.append(btn);
+    });
+  } else {
+    if (clearBtn) clearBtn.hidden = true;
+    const defaultTopRoutes = [
+      { code: '729UP', desc: 'Mori Gate to Kapashera' },
+      { code: '502', desc: 'Mehrauli to Kashmere Gate' },
+      { code: '990UP', desc: 'Rohini to Shivaji Stadium' },
+      { code: '419', desc: 'Ambedkar Nagar to Kashmere Gate' },
+      { code: '73', desc: 'Tilak Nagar to Anand Vihar' }
+    ];
+    defaultTopRoutes.forEach(r => {
+      const btn = element('button', '');
+      btn.type = 'button';
+      btn.className = 'searched-route-chip default';
+      btn.innerHTML = `<span class="chip-rt-badge">${r.code}</span><span class="chip-desc">${r.desc}</span>`;
+      btn.onclick = () => {
+        recordUserSearchedRoute(r.code, r.desc);
+        const activeBus = vehicles.find(v => !v.stale && (v.route_id === r.code));
+        openBusTracker(activeBus, r.code, r.code);
+      };
+      container.append(btn);
+    });
+  }
+}
+
+const clearSearchedBtn = $('clear-searched-routes');
+if (clearSearchedBtn) {
+  clearSearchedBtn.onclick = () => {
+    userSearchedRoutes = [];
+    saveLocal('transit.userSearchedRoutes', []);
+    renderMostSearchedRoutes();
+  };
+}
+renderMostSearchedRoutes();
+
+// Toggle Rush-Hour Crowding Hotspots
+const hotspotsBtn = $('toggle-hotspots');
+if (hotspotsBtn) {
+  hotspotsBtn.onclick = async () => {
+    hotspotsActive = !hotspotsActive;
+    hotspotsBtn.classList.toggle('active', hotspotsActive);
+    if (!hotspotsActive) {
+      hotspots.clearLayers();
+      safeSetText('map-headline', 'Delhi buses, live');
+      safeSetText('map-description', 'Live buses moving across Delhi · updates every 30s');
+      return;
+    }
+    safeSetText('map-headline', '🔥 Rush-Hour Crowding Hotspots');
+    safeSetText('map-description', 'Loading verified peak bottleneck corridors across Delhi…');
+    try {
+      const d = await get('/crowding/top?limit=15&min_confidence=medium');
+      hotspots.clearLayers();
+      if (!d.items || !d.items.length) {
+        safeSetText('map-description', 'No severe bottlenecks found for this filter.');
+        return;
+      }
+      safeSetText('map-description', `Showing top ${d.items.length} rush-hour bottlenecks (standing & peak loads). Tap 🔥 pins for details.`);
+      const pts = [];
+      d.items.forEach((item, idx) => {
+        if (item.stop_lat && item.stop_lon) {
+          pts.push([item.stop_lat, item.stop_lon]);
+          const flameHtml = `<div class="hotspot-flame-marker"><span class="flame-core">🔥</span><span class="flame-ring"></span></div>`;
+          const marker = L.marker([item.stop_lat, item.stop_lon], {
+            icon: L.divIcon({ className: 'hotspot-marker-wrap', html: flameHtml, iconSize: [36, 36], iconAnchor: [18, 18] }),
+            title: `Hotspot #${idx + 1}: ${item.from_stop} (Route ${item.route_short})`
+          });
+          const timeSlot = item.half_hour !== undefined ? `${String(Math.floor(item.half_hour / 2)).padStart(2, '0')}:${item.half_hour % 2 ? '30' : '00'}` : 'Peak Hours';
+          const popupContent = element('div', '');
+          popupContent.className = 'hotspot-popup-card';
+          popupContent.innerHTML = `
+            <div class="hotspot-header"><span class="hotspot-rank">🔥 #${idx + 1} CROWDED</span><span class="hotspot-route">${item.route_short}</span></div>
+            <h4>${item.from_stop || 'Transit Stretch'}</h4>
+            <div class="hotspot-stats">
+              <div><small>Estimated Load</small><strong>~${Math.round(item.load_est)} riders</strong></div>
+              <div><small>Crowd Ratio</small><strong class="hotspot-ratio">${item.ratio}x</strong></div>
+            </div>
+            <div class="hotspot-meta"><span>🕒 Peak slot: ~${timeSlot}</span><span class="hotspot-level-pill ${item.level}">${item.level.toUpperCase()}</span></div>
+          `;
+          marker.bindPopup(popupContent).addTo(hotspots);
+        }
+      });
+      if (pts.length) map.fitBounds(L.latLngBounds(pts), { padding: [40, 40] });
+    } catch (err) {
+      safeSetText('map-description', 'Hotspots unavailable: ' + err.message);
+    }
+  };
+}
+
+const preference = readSaved('transit.busType', 'all');
+document.querySelectorAll('input[name=bus-type]').forEach(r => {
+  r.checked = r.value === preference;
+  r.onchange = () => {
+    saveLocal('transit.busType', r.value);
+    $('bus-type-note').textContent = r.value === 'all' ? 'Showing all buses. Bus type is unverified.' : 'Preference saved. AC / Non-AC filtering awaits verified vehicle data; all buses remain visible.';
+  };
+});
+$('profile-button').onclick = () => { $('rider-name').value = readSaved('transit.name', ''); $('profile-dialog').showModal(); };
+$('save-profile').onclick = () => { const name = $('rider-name').value.trim(); const saved = saveLocal('transit.name', name); $('profile-status').textContent = saved ? 'Profile saved on this device.' : 'Storage unavailable in this browser.'; if (saved) { $('profile-button').textContent = name ? name[0].toUpperCase() : '♙'; $('profile-dialog').close(); } };
+const savedName = readSaved('transit.name', ''); if (typeof savedName === 'string' && savedName) $('profile-button').textContent = savedName[0].toUpperCase(); renderRecent();
+
+// Modern Smart Journey Planner Card Binding
+const planButton = $('find-bus-btn') || element('button', 'Find bus journeys');
+const journeyOutput = $('real-journey-results') || element('section', '');
+const priority = $('journey-priority') || { value: 'fastest' };
+const departureInput = $('rider-departure');
+if (departureInput && !departureInput.value) {
+  departureInput.value = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+  }).format(new Date()).replace(' ', 'T');
+}
+
+planButton.onclick = async () => {
+  const typedOrigin = $('pickup-search').value.trim();
+  const origin = typedOrigin === 'Current location' ? (window.pickupCoordinates || '') : (typedOrigin === window.selectedPickupName ? window.selectedPickupCoordinates : typedOrigin);
+  const typedDestination = $('destination-search').value.trim();
+  const dest = typedDestination === window.destinationName ? window.destinationCoordinates : typedDestination;
+  if (!origin || !dest || origin === 'Current location') {
+    journeyOutput.textContent = 'Select a pickup stop and destination stop to plan your journey.';
+    return;
+  }
+  planButton.disabled = true; journeyOutput.textContent = 'Finding smart bus journeys…';
+  try {
+    const d = await get('/journeys?' + new URLSearchParams({ from: origin, to: dest, mode: priority.value, ...($('rider-departure').value ? { depart: $('rider-departure').value } : {}) }));
+    journeyOutput.replaceChildren();
+    if (!d.options || !d.options.length) {
+      journeyOutput.append(element('p', 'No direct or single-transfer journey found. Try nearby stops or adjusting your departure time.'));
+      return;
+    }
+    d.options.forEach((o, idx) => {
+      const isComfortable = o.crowding === 'seats';
+      const isTop = idx === 0;
+      let recBadgeText = null;
+      if (isTop && isComfortable) {
+        recBadgeText = '⚡ SMART RECOMMENDED · SEATS LIKELY';
+      } else if (isTop) {
+        recBadgeText = '⚡ RECOMMENDED · FASTEST ROUTE';
+      } else if (isComfortable) {
+        recBadgeText = '🛋️ HIGHEST SEAT PROBABILITY';
+      }
+
+      // Filter all active buses on this route corridor
+      const cleanRoute = String(o.route).trim().toUpperCase();
+      const activeRouteBuses = vehicles.filter(v =>
+        !v.stale && (
+          v.route_id === cleanRoute ||
+          (v.route_id && String(v.route_id).toUpperCase() === cleanRoute) ||
+          (cleanRoute.startsWith(String(v.route_id || '').toUpperCase()))
+        )
+      );
+
+      // Sort active buses by proximity to the pickup stop
+      let refLat = 28.6315, refLon = 77.2167;
+      if (o.board && o.board.lat && o.board.lon) {
+        refLat = o.board.lat;
+        refLon = o.board.lon;
+      } else if (window.selectedPickupCoordinates) {
+        [refLat, refLon] = window.selectedPickupCoordinates.split(',').map(Number);
+      }
+
+      activeRouteBuses.sort((a, b) => {
+        const da = haversineM(refLat, refLon, a.lat, a.lon);
+        const db = haversineM(refLat, refLon, b.lat, b.lon);
+        return da - db;
+      });
+
+      const nearestBus = activeRouteBuses.length > 0 ? activeRouteBuses[0] : null;
+      let nearestDistM = nearestBus ? haversineM(refLat, refLon, nearestBus.lat, nearestBus.lon) : Infinity;
+
+      const busCount = activeRouteBuses.length;
+      let fleetPreviewHtml = '';
+      if (busCount > 0 && nearestBus) {
+        const distLabel = nearestDistM < 1000 ? Math.round(nearestDistM) + 'm' : (nearestDistM / 1000).toFixed(1) + ' km';
+        const isAC = nearestBus.bus_type === 'ac';
+        fleetPreviewHtml = `
+          <div class="journey-fleet-banner">
+            <div class="fleet-count-line">
+              <span class="live-pulse-dot"></span>
+              <strong>${busCount} active ${busCount === 1 ? 'bus' : 'buses'} running now</strong>
+            </div>
+            <div class="nearest-bus-line">
+              <span class="nearest-star">⭐ Nearest:</span>
+              <span class="nearest-bus-chip">${isAC ? '❄ ' : '🚌 '}Bus #${nearestBus.id}</span>
+              <span class="nearest-dist">~${distLabel} from pickup</span>
+            </div>
+          </div>
+        `;
+      } else {
+        fleetPreviewHtml = `
+          <div class="journey-fleet-banner scheduled">
+            <div class="fleet-count-line">
+              <span class="sched-icon">🕒</span>
+              <span>No live GPS bus broadcasting · Running on regular schedule</span>
+            </div>
+          </div>
+        `;
+      }
+
+      // Estimate route distance for DTC fare
+      let totalDistKm = 0;
+      if (o.geometry && o.geometry.length > 1) {
+        for (let i = 0; i < o.geometry.length - 1; i++) {
+          totalDistKm += haversineM(o.geometry[i][0], o.geometry[i][1], o.geometry[i + 1][0], o.geometry[i + 1][1]) / 1000;
+        }
+      } else {
+        totalDistKm = (o.stops || 12) * 0.75;
+      }
+      const fareObj = calculateDTCFare(totalDistKm, activeBusType);
+
+      const card = element('article', ''); card.className = 'smart-journey-card';
+      let html = '';
+      if (recBadgeText) {
+        html += `<div class="smart-rec-badge ${isComfortable ? 'seat-green' : 'speed-blue'}">${recBadgeText}</div>`;
+      }
+      const crowdLabel = o.crowding === 'seats' ? 'Seats likely' : (o.crowding === 'standing' ? 'Standing room' : 'High crowding');
+      const crowdClass = o.crowding || 'seats';
+
+      html += `
+        <div class="smart-journey-header">
+          <div class="route-badge-wrap">
+            <span class="smart-route-badge">${o.route}</span>
+            ${o.transfers ? `<span class="transfer-pill">1 transfer</span>` : ''}
+          </div>
+          <div class="smart-duration">
+            <span class="num">${o.total_min}</span><small>min</small>
+          </div>
+        </div>
+        <div class="smart-journey-stops">
+          <span class="stop-dot start"></span>
+          <span class="stop-name origin">${o.board.name}</span>
+          <span class="stop-arrow">→</span>
+          <span class="stop-dot end"></span>
+          <span class="stop-name dest">${o.alight.name}</span>
+        </div>
+        <div class="smart-chips-row">
+          <span class="smart-chip">🚶 ${o.walk_min}m walk</span>
+          <span class="smart-chip">⏳ ~${o.wait_min}m wait</span>
+          <span class="smart-chip">🚌 ${o.ride_min}m ride</span>
+          <span class="smart-crowd-chip ${crowdClass}">● ${crowdLabel}</span>
+        </div>
+        ${o.transfers && o.transfer_stop ? `<div class="smart-transfer-info">🔁 Change bus at <strong>${o.transfer_stop}</strong> · ~${o.transfer_min} min buffer</div>` : ''}
+        ${fleetPreviewHtml}
+        <div class="journey-fare-row">
+          <div class="fare-pills-wrap">
+            <span class="fare-cost-tag">🎫 ₹${fareObj.standard} (Non-AC) · ❄ ₹${fareObj.ac} (AC)</span>
+            <span class="pink-ticket-tag">🌸 Free Pink Pass</span>
+          </div>
+          <button type="button" class="btn-get-ticket">E-Ticket ➔</button>
+        </div>
+        <div class="smart-card-action-grid">
+          <button type="button" class="btn-start-ride-card">🚀 Start Ride</button>
+          <button type="button" class="btn-view-map-link">🗺️ View Map</button>
+        </div>
+        <button type="button" class="btn-track-live-route" style="margin-top:8px;">Track Route Station-by-Station ➔</button>
+      `;
+
+      card.innerHTML = html;
+
+      const showRouteOnMap = (e) => {
+        if (e) e.stopPropagation();
+        paths.clearLayers();
+
+        // 1. Draw True Road Polyline
+        const legs = o.legs || [o];
+        legs.forEach((leg, i) => {
+          if (leg.geometry && leg.geometry.length) {
+            // Road casing
+            L.polyline(leg.geometry, {
+              color: '#064e3b',
+              weight: 7.5,
+              opacity: 0.8,
+              lineJoin: 'round',
+              lineCap: 'round'
+            }).addTo(paths);
+
+            // Vibrant road line
+            L.polyline(leg.geometry, {
+              color: i ? '#0284c7' : '#10b981',
+              weight: 4.5,
+              opacity: 0.95,
+              lineJoin: 'round',
+              lineCap: 'round'
+            }).addTo(paths);
+          }
+        });
+
+        // 2. Intermediate Stations (along the road between start and end)
+        const stations = o.stations || [];
+        if (stations.length > 0) {
+          stations.forEach((st, sIdx) => {
+            // Skip the first and last stops as they receive prominent Location Pointer Pins
+            if (sIdx === 0 || sIdx === stations.length - 1) return;
+
+            const stopSeq = st.seq !== undefined ? st.seq : (sIdx + 1);
+            const stationDot = L.circleMarker([st.lat, st.lon], {
+              radius: 5,
+              fillColor: '#ffffff',
+              fillOpacity: 1,
+              color: '#15803d',
+              weight: 2.5
+            });
+
+            stationDot.bindTooltip(`<strong>Stop ${stopSeq}:</strong> ${st.name}`, {
+              permanent: false,
+              direction: 'top',
+              className: 'station-map-tooltip'
+            });
+
+            stationDot.bindPopup(`
+              <div class="map-station-popup">
+                <span class="station-seq-badge">Stop ${stopSeq} of ${stations.length}</span>
+                <strong>${st.name}</strong>
+                <p class="station-route-meta">Route ${o.route} · intermediate station</p>
+              </div>
+            `);
+
+            stationDot.addTo(paths);
+          });
+        }
+
+        // 3. Location Pointer Logo at START (Pickup Stop)
+        if (o.board && o.board.lat && o.board.lon) {
+          const startPin = L.divIcon({
+            className: 'journey-pointer-wrap',
+            html: `
+              <div class="route-location-pin start" title="Start / Pickup Stop: ${o.board.name}">
+                <div class="pin-marker-body">
+                  <span class="pin-logo">📍</span>
+                  <span class="pin-label">START</span>
+                </div>
+                <div class="pin-pointer-tip"></div>
+                <div class="pin-pulse-ring"></div>
+              </div>
+            `,
+            iconSize: [74, 44],
+            iconAnchor: [37, 42]
+          });
+
+          L.marker([o.board.lat, o.board.lon], { icon: startPin, zIndexOffset: 2000 })
+            .bindPopup(`
+              <div class="map-station-popup">
+                <span class="station-seq-badge" style="background:#dcfce7;color:#15803d;">📍 START / PICKUP</span>
+                <strong>${o.board.name}</strong>
+                <p class="station-route-meta">Board Route ${o.route}</p>
+              </div>
+            `)
+            .addTo(paths);
+        }
+
+        // 4. Location Pointer Logo at END (Destination Stop)
+        if (o.alight && o.alight.lat && o.alight.lon) {
+          const endPin = L.divIcon({
+            className: 'journey-pointer-wrap',
+            html: `
+              <div class="route-location-pin end" title="Destination Stop: ${o.alight.name}">
+                <div class="pin-marker-body">
+                  <span class="pin-logo">🏁</span>
+                  <span class="pin-label">DESTINATION</span>
+                </div>
+                <div class="pin-pointer-tip"></div>
+              </div>
+            `,
+            iconSize: [104, 44],
+            iconAnchor: [52, 42]
+          });
+
+          L.marker([o.alight.lat, o.alight.lon], { icon: endPin, zIndexOffset: 2000 })
+            .bindPopup(`
+              <div class="map-station-popup">
+                <span class="station-seq-badge" style="background:#fee2e2;color:#b91c1c;">🏁 DESTINATION</span>
+                <strong>${o.alight.name}</strong>
+                <p class="station-route-meta">Alight here</p>
+              </div>
+            `)
+            .addTo(paths);
+        }
+
+        // 5. Fit bounds to full road path
+        if (o.geometry && o.geometry.length) {
+          map.fitBounds(L.polyline(o.geometry).getBounds(), { padding: [50, 50] });
+        }
+
+        document.querySelector('.app').classList.add('journey-map');
+        map.invalidateSize();
+        safeSetText('map-headline', 'Route ' + o.route);
+        safeSetText('map-description', `${o.board.name} → ${o.alight.name} · ${stations.length || o.stops} stops along road`);
+      };
+
+      const openTrackerAction = (e) => {
+        if (e) e.stopPropagation();
+        if (typeof recordUserSearchedRoute === 'function') {
+          recordUserSearchedRoute(o.route, `${o.board.name} to ${o.alight.name}`);
+        }
+        openBusTracker(nearestBus, o.route, o.route, o.segments);
+      };
+
+      card.querySelector('.btn-track-live-route').onclick = openTrackerAction;
+      const viewMapBtn = card.querySelector('.btn-view-map-link');
+      if (viewMapBtn) viewMapBtn.onclick = showRouteOnMap;
+      const getTicketBtn = card.querySelector('.btn-get-ticket');
+      if (getTicketBtn) {
+        getTicketBtn.onclick = (e) => {
+          e.stopPropagation();
+          openDigitalTicket(o.route, o.board.name, o.alight.name, fareObj, activeBusType === 'ac');
+        };
+      }
+      const startRideCardBtn = card.querySelector('.btn-start-ride-card');
+      if (startRideCardBtn) {
+        startRideCardBtn.onclick = (e) => {
+          e.stopPropagation();
+          startRideMode(o);
+          showRouteOnMap(null);
+        };
+      }
+      showRouteOnMapGlobal = showRouteOnMap;
+      card.onclick = openTrackerAction;
+      journeyOutput.append(card);
+    });
+  } catch (e) {
+    journeyOutput.textContent = e.message;
+  } finally {
+    planButton.disabled = false;
+  }
+};
+
+const backToOptions = element('button', 'Back to journey options'); backToOptions.id = 'back-to-options'; backToOptions.onclick = () => document.querySelector('.app').classList.remove('journey-map'); document.querySelector('.map-panel').append(backToOptions);
+const noteEl = $('bus-type-note');
+const typeMessage = () => { if (noteEl) noteEl.textContent = activeBusType === 'all' ? 'Showing all live buses. AC type, when known, is inferred from October tickets.' : 'Map filter: ' + (activeBusType === 'ac' ? 'AC' : 'Non-AC') + ' from consistent October ticket evidence. Unknown vehicles are hidden; journey options are not filtered.'; };
+activeBusType = ['ac', 'non-ac'].includes(preference) ? preference : 'all';
+document.querySelectorAll('input[name=bus-type]').forEach(r => { r.onchange = () => { activeBusType = r.value; saveLocal('transit.busType', r.value); typeMessage(); paint(); }; }); typeMessage();

@@ -1,0 +1,12 @@
+pandas>=2.0
+numpy>=1.24
+pyarrow>=14.0
+pyyaml>=6.0
+fastapi>=0.110
+uvicorn>=0.27
+pytest>=8.0
+httpx>=0.28
+tzdata>=2024.1
+
+gtfs-realtime-bindings>=3.0
+python-dotenv>=1.2
