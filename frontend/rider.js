@@ -29,8 +29,9 @@ let currentTrackedRouteId = null;
 let currentTrackedRouteName = null;
 let currentTrackedSegments = null;
 let showRouteOnMapGlobal = null;
+const routeStopsCache = new Map();
 
-async function openBusTracker(vehicle, routeId, routeName, segments) {
+async function openBusTracker(vehicle, routeId, routeName, segments, isBackgroundUpdate = false) {
   currentTrackedVehicle = vehicle;
   currentTrackedRouteId = routeId;
   currentTrackedRouteName = routeName;
@@ -38,12 +39,23 @@ async function openBusTracker(vehicle, routeId, routeName, segments) {
 
   const sheet = $('bus-tracker-sheet');
   if (!sheet) return;
-  sheet.hidden = false;
-  sheet.scrollTop = 0;
 
   const routeCode = routeName || (vehicle && vehicle.route_id) || routeId || 'BUS';
+  const queryRoute = routeId || routeCode;
   const busId = (vehicle && vehicle.id) ? ('Bus ' + vehicle.id) : ('Route ' + routeCode);
   const isAC = vehicle && vehicle.bus_type === 'ac';
+
+  const listEl = $('stations-timeline-list');
+  const existingStationNodes = listEl ? listEl.querySelectorAll('.station-node') : [];
+  const isAlreadyOpen = !sheet.hidden &&
+    (sheet.dataset.trackedRoute === String(queryRoute)) &&
+    existingStationNodes.length > 0;
+
+  if (!isAlreadyOpen) {
+    sheet.hidden = false;
+    sheet.scrollTop = 0;
+    sheet.dataset.trackedRoute = String(queryRoute);
+  }
 
   safeSetText('tracker-route-num', routeCode);
   const acBadge = $('tracker-ac-badge');
@@ -61,16 +73,23 @@ async function openBusTracker(vehicle, routeId, routeName, segments) {
 
   const currentStationEl = $('tracker-current-station');
   const nextEtaEl = $('tracker-next-eta');
-  const listEl = $('stations-timeline-list');
 
-  if (currentStationEl) currentStationEl.textContent = 'Locating current station…';
-  if (nextEtaEl) nextEtaEl.textContent = 'Tracking route progression…';
-  if (listEl) listEl.innerHTML = '<div class="timeline-loading-spinner" style="padding:28px 16px;text-align:center;color:#64748b;font-size:13px;">Loading route stations…</div>';
+  // ONLY show loading state if the sheet is NOT already open and showing this route
+  if (!isAlreadyOpen) {
+    if (currentStationEl) currentStationEl.textContent = 'Locating current station…';
+    if (nextEtaEl) nextEtaEl.textContent = 'Tracking route progression…';
+    if (listEl) listEl.innerHTML = '<div class="timeline-loading-spinner" style="padding:28px 16px;text-align:center;color:#64748b;font-size:13px;">Loading route stations…</div>';
+  }
 
   try {
-    const queryRoute = routeId || routeCode;
-    const data = await get('/transit/routes/' + encodeURIComponent(queryRoute) + '/stops');
-    const stops = data.stops || [];
+    let stops = routeStopsCache.get(queryRoute);
+    if (!stops || !stops.length) {
+      const data = await get('/transit/routes/' + encodeURIComponent(queryRoute) + '/stops');
+      stops = data.stops || [];
+      if (stops.length) {
+        routeStopsCache.set(queryRoute, stops);
+      }
+    }
 
     if (!stops.length) {
       if (currentStationEl) currentStationEl.textContent = 'Route details available';
@@ -149,7 +168,7 @@ async function openBusTracker(vehicle, routeId, routeName, segments) {
           `;
 
           chip.onclick = () => {
-            openBusTracker(b, routeId, routeName, currentTrackedSegments);
+            openBusTracker(b, routeId, routeName, currentTrackedSegments, true);
           };
 
           fleetChipsEl.append(chip);
@@ -197,172 +216,226 @@ async function openBusTracker(vehicle, routeId, routeName, segments) {
       }
     }
 
-    if (listEl) {
-      listEl.replaceChildren();
-
-      // Build crowd level lookup from journey segments if available
-      const crowdMap = new Map();
-      if (Array.isArray(currentTrackedSegments)) {
-        currentTrackedSegments.forEach(seg => {
-          if (seg.from) crowdMap.set(String(seg.from).trim().toLowerCase(), seg.level);
-          if (seg.to) crowdMap.set(String(seg.to).trim().toLowerCase(), seg.level);
-        });
-      }
-
-      stops.forEach((stop, idx) => {
+    // IN-PLACE SMOOTH UPDATE: If the sheet is already open with the full stop list, update in place!
+    const existingNodes = listEl ? listEl.querySelectorAll('.station-node') : [];
+    if (isAlreadyOpen && existingNodes.length === stops.length) {
+      existingNodes.forEach((node, idx) => {
         const isPassed = idx < currentIdx;
         const isCurrent = idx === currentIdx;
         const isUpcoming = idx > currentIdx;
 
-        const node = element('div', '');
         node.className = `station-node ${isPassed ? 'passed' : ''} ${isCurrent ? 'current' : ''} ${isUpcoming ? 'upcoming' : ''}`;
-        if (isCurrent) node.id = 'current-station-node';
-
-        // Track column with line and indicator
-        const trackCol = element('div', '');
-        trackCol.className = 'station-track-col';
-
-        const lineTop = element('div', '');
-        lineTop.className = `station-track-line top ${idx === 0 ? 'hidden' : ''} ${isPassed || isCurrent ? 'passed-line' : ''}`;
-
-        const pinWrapper = element('div', '');
-        pinWrapper.className = 'station-pin-wrap';
         if (isCurrent) {
-          pinWrapper.innerHTML = `<div class="station-bus-pin" title="Bus is here"><span class="pin-bus-icon">🚌</span></div>`;
-        } else if (isPassed) {
-          pinWrapper.innerHTML = `<div class="station-check-dot">✓</div>`;
-        } else {
-          pinWrapper.innerHTML = `<div class="station-upcoming-dot"></div>`;
+          node.id = 'current-station-node';
+        } else if (node.id === 'current-station-node') {
+          node.removeAttribute('id');
         }
 
-        const lineBottom = element('div', '');
-        lineBottom.className = `station-track-line bottom ${idx === stops.length - 1 ? 'hidden' : ''} ${isPassed ? 'passed-line' : ''}`;
-
-        trackCol.append(lineTop, pinWrapper, lineBottom);
-
-        // Details column
-        const detailsCol = element('div', '');
-        detailsCol.className = 'station-details-col';
-
-        const titleRow = element('div', '');
-        titleRow.className = 'station-title-row';
-
-        const nameEl = element('h4', stop.stop_name);
-        nameEl.className = 'station-name';
-        titleRow.append(nameEl);
-
-        const stopKey = String(stop.stop_name).trim().toLowerCase();
-        const crowdLvl = crowdMap.get(stopKey);
-        let crowdPill = '';
-        if (crowdLvl) {
-          const lbl = crowdLvl === 'seats' ? 'Seats likely' : (crowdLvl === 'standing' ? 'Standing' : 'Crowded');
-          crowdPill = `<span class="station-crowd-tag ${crowdLvl}">● ${lbl}</span>`;
+        const lineTop = node.querySelector('.station-track-line.top');
+        if (lineTop) {
+          lineTop.className = `station-track-line top ${idx === 0 ? 'hidden' : ''} ${isPassed || isCurrent ? 'passed-line' : ''}`;
         }
 
-        const badgesWrap = element('div', '');
-        badgesWrap.className = 'station-badges-wrap';
-        if (crowdPill) {
-          const cSpan = document.createElement('span');
-          cSpan.innerHTML = crowdPill;
-          badgesWrap.append(cSpan);
-        }
-
-        if (isCurrent) {
-          const badge = element('span', 'HERE NOW');
-          badge.className = 'station-status-pill current-pill';
-          badgesWrap.append(badge);
-        } else if (isPassed) {
-          const badge = element('span', 'Departed');
-          badge.className = 'station-status-pill passed-pill';
-          badgesWrap.append(badge);
-        }
-        titleRow.append(badgesWrap);
-
-        const metaRow = element('div', '');
-        metaRow.className = 'station-meta-row';
-        const seqText = `Stop ${idx + 1}`;
-        let distText = '';
-        if (isCurrent) {
-          distText = minDist < 150 ? '· At platform' : `· ~${Math.round(minDist)}m`;
-        } else if (isUpcoming && minDist < Infinity) {
-          const stopsAway = idx - currentIdx;
-          distText = `· ~${stopsAway * 3} min away`;
-        }
-        metaRow.append(element('span', `${seqText} ${distText}`));
-
-        // Departures timetable expandable toggle
-        const depToggle = element('button', 'Scheduled departures ›');
-        depToggle.type = 'button';
-        depToggle.className = 'btn-station-times';
-
-        const depContainer = element('div', '');
-        depContainer.className = 'station-departures-box';
-        depContainer.hidden = true;
-
-        depToggle.onclick = async (e) => {
-          e.stopPropagation();
-          if (!depContainer.hidden) {
-            depContainer.hidden = true;
-            depToggle.textContent = 'Scheduled departures ›';
-            return;
+        const pinWrap = node.querySelector('.station-pin-wrap');
+        if (pinWrap) {
+          if (isCurrent) {
+            pinWrap.innerHTML = `<div class="station-bus-pin" title="Bus is here"><span class="pin-bus-icon">🚌</span></div>`;
+          } else if (isPassed) {
+            pinWrap.innerHTML = `<div class="station-check-dot">✓</div>`;
+          } else {
+            pinWrap.innerHTML = `<div class="station-upcoming-dot"></div>`;
           }
-          depContainer.hidden = false;
-          depToggle.textContent = 'Hide departures ‹';
-          depContainer.innerHTML = '<div style="font-size:11.5px;color:#64748b;">Checking departures…</div>';
-          try {
-            const res = await get('/transit/stops/' + encodeURIComponent(stop.stop_id) + '/departures');
-            depContainer.replaceChildren();
-            if (!res.departures || !res.departures.length) {
-              depContainer.append(element('p', 'No scheduled departures in the next 2 hours.'));
-            } else {
-              res.departures.slice(0, 6).forEach(dep => {
-                const row = element('div', '');
-                row.className = 'mini-dep-row';
-                row.innerHTML = `<strong>Route ${dep.route}</strong><span>In ${Math.ceil(dep.minutes)} min</span>`;
-                depContainer.append(row);
-              });
-            }
-          } catch (err) {
-            depContainer.textContent = 'Departures unavailable';
-          }
-        };
+        }
 
-        detailsCol.append(titleRow, metaRow, depToggle, depContainer);
-        node.append(trackCol, detailsCol);
-        listEl.append(node);
+        const lineBottom = node.querySelector('.station-track-line.bottom');
+        if (lineBottom) {
+          lineBottom.className = `station-track-line bottom ${idx === stops.length - 1 ? 'hidden' : ''} ${isPassed ? 'passed-line' : ''}`;
+        }
+
+        const badgesWrap = node.querySelector('.station-badges-wrap');
+        if (badgesWrap) {
+          const oldStatusPill = badgesWrap.querySelector('.station-status-pill');
+          if (oldStatusPill) oldStatusPill.remove();
+
+          if (isCurrent) {
+            const badge = element('span', 'HERE NOW');
+            badge.className = 'station-status-pill current-pill';
+            badgesWrap.append(badge);
+          } else if (isPassed) {
+            const badge = element('span', 'Departed');
+            badge.className = 'station-status-pill passed-pill';
+            badgesWrap.append(badge);
+          }
+        }
+
+        const metaRow = node.querySelector('.station-meta-row');
+        if (metaRow) {
+          const seqText = `Stop ${idx + 1}`;
+          let distText = '';
+          if (isCurrent) {
+            distText = minDist < 150 ? '· At platform' : `· ~${Math.round(minDist)}m`;
+          } else if (isUpcoming && minDist < Infinity) {
+            const stopsAway = idx - currentIdx;
+            distText = `· ~${stopsAway * 3} min away`;
+          }
+          metaRow.textContent = `${seqText} ${distText}`;
+        }
       });
+      // NOTICE: In-place update complete! NO scrollIntoView, NO scrollTop=0, NO reloading screen!
+    } else {
+      // INITIAL FULL RENDER (Only executed on first open of this corridor)
+      if (listEl) {
+        listEl.replaceChildren();
 
-      // Auto-scroll to current station
-      setTimeout(() => {
-        const curr = $('current-station-node');
-        if (curr) {
-          curr.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
-      }, 250);
-
-      // Bind Start Ride from tracker sheet
-      const startRideFromTrackerBtn = $('btn-start-ride-from-tracker');
-      if (startRideFromTrackerBtn) {
-        startRideFromTrackerBtn.onclick = () => {
-          const sheet = $('bus-tracker-sheet');
-          if (sheet) sheet.hidden = true;
-          stopAutoTrackerPolling();
-          startRideMode({
-            route: routeCode,
-            board: stops[0] ? { name: stops[0].stop_name, lat: stops[0].stop_lat, lon: stops[0].stop_lon } : { name: 'Origin' },
-            alight: stops[stops.length - 1] ? { name: stops[stops.length - 1].stop_name, lat: stops[stops.length - 1].stop_lat, lon: stops[stops.length - 1].stop_lon } : { name: 'Destination' },
-            stations: stops.map((s, idx) => ({ name: s.stop_name, lat: s.stop_lat, lon: s.stop_lon, seq: idx + 1 })),
-            geometry: stops.map(s => [s.stop_lat, s.stop_lon])
+        // Build crowd level lookup from journey segments if available
+        const crowdMap = new Map();
+        if (Array.isArray(currentTrackedSegments)) {
+          currentTrackedSegments.forEach(seg => {
+            if (seg.from) crowdMap.set(String(seg.from).trim().toLowerCase(), seg.level);
+            if (seg.to) crowdMap.set(String(seg.to).trim().toLowerCase(), seg.level);
           });
-        };
-      }
+        }
 
-      startAutoTrackerPolling();
+        stops.forEach((stop, idx) => {
+          const isPassed = idx < currentIdx;
+          const isCurrent = idx === currentIdx;
+          const isUpcoming = idx > currentIdx;
+
+          const node = element('div', '');
+          node.className = `station-node ${isPassed ? 'passed' : ''} ${isCurrent ? 'current' : ''} ${isUpcoming ? 'upcoming' : ''}`;
+          if (isCurrent) node.id = 'current-station-node';
+
+          // Track column with line and indicator
+          const trackCol = element('div', '');
+          trackCol.className = 'station-track-col';
+
+          const lineTop = element('div', '');
+          lineTop.className = `station-track-line top ${idx === 0 ? 'hidden' : ''} ${isPassed || isCurrent ? 'passed-line' : ''}`;
+
+          const pinWrapper = element('div', '');
+          pinWrapper.className = 'station-pin-wrap';
+          if (isCurrent) {
+            pinWrapper.innerHTML = `<div class="station-bus-pin" title="Bus is here"><span class="pin-bus-icon">🚌</span></div>`;
+          } else if (isPassed) {
+            pinWrapper.innerHTML = `<div class="station-check-dot">✓</div>`;
+          } else {
+            pinWrapper.innerHTML = `<div class="station-upcoming-dot"></div>`;
+          }
+
+          const lineBottom = element('div', '');
+          lineBottom.className = `station-track-line bottom ${idx === stops.length - 1 ? 'hidden' : ''} ${isPassed ? 'passed-line' : ''}`;
+
+          trackCol.append(lineTop, pinWrapper, lineBottom);
+
+          // Details column
+          const detailsCol = element('div', '');
+          detailsCol.className = 'station-details-col';
+
+          const titleRow = element('div', '');
+          titleRow.className = 'station-title-row';
+
+          const nameEl = element('h4', stop.stop_name);
+          nameEl.className = 'station-name';
+          titleRow.append(nameEl);
+
+          const stopKey = String(stop.stop_name).trim().toLowerCase();
+          const crowdLvl = crowdMap.get(stopKey);
+          let crowdPill = '';
+          if (crowdLvl) {
+            const lbl = crowdLvl === 'seats' ? 'Seats likely' : (crowdLvl === 'standing' ? 'Standing' : 'Crowded');
+            crowdPill = `<span class="station-crowd-tag ${crowdLvl}">● ${lbl}</span>`;
+          }
+
+          const badgesWrap = element('div', '');
+          badgesWrap.className = 'station-badges-wrap';
+          if (crowdPill) {
+            const cSpan = document.createElement('span');
+            cSpan.innerHTML = crowdPill;
+            badgesWrap.append(cSpan);
+          }
+
+          if (isCurrent) {
+            const badge = element('span', 'HERE NOW');
+            badge.className = 'station-status-pill current-pill';
+            badgesWrap.append(badge);
+          } else if (isPassed) {
+            const badge = element('span', 'Departed');
+            badge.className = 'station-status-pill passed-pill';
+            badgesWrap.append(badge);
+          }
+          titleRow.append(badgesWrap);
+
+          const metaRow = element('div', '');
+          metaRow.className = 'station-meta-row';
+          const seqText = `Stop ${idx + 1}`;
+          let distText = '';
+          if (isCurrent) {
+            distText = minDist < 150 ? '· At platform' : `· ~${Math.round(minDist)}m`;
+          } else if (isUpcoming && minDist < Infinity) {
+            const stopsAway = idx - currentIdx;
+            distText = `· ~${stopsAway * 3} min away`;
+          }
+          metaRow.append(element('span', `${seqText} ${distText}`));
+
+          // Departures timetable expandable toggle
+          const depToggle = element('button', 'Scheduled departures ›');
+          depToggle.type = 'button';
+          depToggle.className = 'btn-station-times';
+
+          const depContainer = element('div', '');
+          depContainer.className = 'station-departures-box';
+          depContainer.hidden = true;
+
+          depToggle.onclick = async (e) => {
+            e.stopPropagation();
+            if (!depContainer.hidden) {
+              depContainer.hidden = true;
+              depToggle.textContent = 'Scheduled departures ›';
+              return;
+            }
+            depContainer.hidden = false;
+            depToggle.textContent = 'Hide departures ‹';
+            depContainer.innerHTML = '<div style="font-size:11.5px;color:#64748b;">Checking departures…</div>';
+            try {
+              const res = await get('/transit/stops/' + encodeURIComponent(stop.stop_id) + '/departures');
+              depContainer.replaceChildren();
+              if (!res.departures || !res.departures.length) {
+                depContainer.append(element('p', 'No scheduled departures in the next 2 hours.'));
+              } else {
+                res.departures.slice(0, 6).forEach(dep => {
+                  const row = element('div', '');
+                  row.className = 'mini-dep-row';
+                  row.innerHTML = `<strong>Route ${dep.route}</strong><span>In ${Math.ceil(dep.minutes)} min</span>`;
+                  depContainer.append(row);
+                });
+              }
+            } catch (err) {
+              depContainer.textContent = 'Departures unavailable';
+            }
+          };
+
+          detailsCol.append(titleRow, metaRow, depToggle, depContainer);
+          node.append(trackCol, detailsCol);
+          listEl.append(node);
+        });
+
+        // Auto-scroll to current station ONLY on initial open
+        setTimeout(() => {
+          const curr = $('current-station-node');
+          if (curr) {
+            curr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }, 250);
+      }
     }
+
+    startAutoTrackerPolling();
   } catch (err) {
     if (currentStationEl) currentStationEl.textContent = 'Route details';
     if (nextEtaEl) nextEtaEl.textContent = 'Timeline will update when route details are loaded.';
-    if (listEl) listEl.innerHTML = `<div style="padding:24px;text-align:center;color:#64748b;">Could not load station timeline: ${err.message}</div>`;
+    if (listEl && !isAlreadyOpen) {
+      listEl.innerHTML = `<div style="padding:24px;text-align:center;color:#64748b;">Could not load station timeline: ${err.message}</div>`;
+    }
   }
 }
 
@@ -391,7 +464,7 @@ function startAutoTrackerPolling() {
         const found = vehicles.find(v => !v.stale && (v.route_id === currentTrackedRouteId || v.route_id === rCode));
         if (found) currentTrackedVehicle = found;
       }
-      await openBusTracker(currentTrackedVehicle, currentTrackedRouteId, currentTrackedRouteName, currentTrackedSegments);
+      await openBusTracker(currentTrackedVehicle, currentTrackedRouteId, currentTrackedRouteName, currentTrackedSegments, true);
     } catch (_) {}
   }, 12000);
 }
@@ -407,7 +480,10 @@ const closeTrackerBtn = $('close-tracker-btn');
 if (closeTrackerBtn) {
   closeTrackerBtn.onclick = () => {
     const sheet = $('bus-tracker-sheet');
-    if (sheet) sheet.hidden = true;
+    if (sheet) {
+      sheet.hidden = true;
+      delete sheet.dataset.trackedRoute;
+    }
     stopAutoTrackerPolling();
   };
 }
@@ -428,7 +504,7 @@ if (trackerRefreshBtn) {
         const found = vehicles.find(v => !v.stale && (v.route_id === currentTrackedRouteId || v.route_id === rCode));
         if (found) currentTrackedVehicle = found;
       }
-      await openBusTracker(currentTrackedVehicle, currentTrackedRouteId, currentTrackedRouteName, currentTrackedSegments);
+      await openBusTracker(currentTrackedVehicle, currentTrackedRouteId, currentTrackedRouteName, currentTrackedSegments, true);
     } catch (err) {
       console.warn('Tracker refresh error:', err);
     } finally {
