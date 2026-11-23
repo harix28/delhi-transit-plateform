@@ -137,8 +137,10 @@ async function openBusTracker(vehicle, routeId, routeName, segments) {
           chip.innerHTML = `
             <div class="fleet-chip-top">
               <span class="fleet-bus-id">${isAC ? '❄ ' : '🚌 '}Bus #${b.id}</span>
-              ${isNearest ? '<span class="nearest-badge">⭐ NEAREST TO YOU</span>' : ''}
-              ${isSelected ? '<span class="tracking-badge">● Tracking</span>' : ''}
+              <div class="fleet-badges-wrap">
+                ${isNearest ? '<span class="nearest-badge">⭐ NEAREST</span>' : ''}
+                ${isSelected ? '<span class="tracking-badge">● Tracking</span>' : ''}
+              </div>
             </div>
             <div class="fleet-chip-bottom">
               <span>📍 ~${distLabel} from pickup</span>
@@ -1141,11 +1143,11 @@ function renderMostSearchedRoutes() {
   } else {
     if (clearBtn) clearBtn.hidden = true;
     const defaultTopRoutes = [
-      { code: '729UP', desc: 'Mori Gate to Kapashera' },
-      { code: '502', desc: 'Mehrauli to Kashmere Gate' },
-      { code: '990UP', desc: 'Rohini to Shivaji Stadium' },
-      { code: '419', desc: 'Ambedkar Nagar to Kashmere Gate' },
-      { code: '73', desc: 'Tilak Nagar to Anand Vihar' }
+      { code: '729', desc: 'Mori Gate ⇄ Kapashera' },
+      { code: '502', desc: 'Mehrauli ⇄ Kashmere Gate' },
+      { code: '990', desc: 'Rohini ⇄ Shivaji Stadium' },
+      { code: '419', desc: 'Ambedkar Ngr ⇄ Kashmere Gate' },
+      { code: '73', desc: 'Tilak Nagar ⇄ Anand Vihar' }
     ];
     defaultTopRoutes.forEach(r => {
       const btn = element('button', '');
@@ -1386,8 +1388,10 @@ planButton.onclick = async () => {
           </div>
           <button type="button" class="btn-get-ticket">E-Ticket ➔</button>
         </div>
-        <button type="button" class="btn-view-map-link" style="width:100%;margin-top:6px;padding:12px;border-radius:12px;font-weight:700;background:#e2f2e9;color:#065f46;border:1px solid #a7f3d0;display:flex;align-items:center;justify-content:center;gap:8px;font-size:14px;">🗺️ View Corridor on Map</button>
-        <button type="button" class="btn-track-live-route" style="margin-top:8px;">Track Route Station-by-Station ➔</button>
+        <div class="journey-card-actions-grid">
+          <button type="button" class="btn-view-map-link">🗺️ View Map</button>
+          <button type="button" class="btn-track-live-route">Live Tracker ➔</button>
+        </div>
       `;
 
       card.innerHTML = html;

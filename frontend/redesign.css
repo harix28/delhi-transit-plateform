@@ -3172,3 +3172,537 @@ header {
 .btn-dismiss-alight:active {
   background: #92400e;
 }
+
+
+/* ==========================================================================
+   PROFESSIONAL UI BUILDER SYSTEM & ANTI-LINE-WRAP ENHANCEMENTS
+   ========================================================================== */
+
+/* 1. Header & App Shell Single-Row Hygiene */
+header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  flex-wrap: nowrap !important;
+  gap: 12px !important;
+}
+
+.wordmark {
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.5px !important;
+}
+
+.header-right {
+  display: flex !important;
+  align-items: center !important;
+  flex-shrink: 0 !important;
+}
+
+.btn-install-pwa {
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+  font-weight: 700 !important;
+}
+
+/* 2. Most Searched Routes: Sleek Horizontal Swipeable Chip Row (No Ugly Line Wrapping) */
+.user-routes-shortcuts-container {
+  margin-top: 14px !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+.user-routes-header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  margin-bottom: 8px !important;
+}
+
+.user-routes-header .hub-title {
+  font-size: 10px !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.8px !important;
+  text-transform: uppercase !important;
+  color: #64748b !important;
+  white-space: nowrap !important;
+}
+
+.searched-route-chips {
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  overflow-x: auto !important;
+  gap: 8px !important;
+  padding: 2px 2px 8px !important;
+  -webkit-overflow-scrolling: touch !important;
+  scrollbar-width: none !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+.searched-route-chips::-webkit-scrollbar {
+  display: none !important;
+}
+
+.searched-route-chip {
+  flex-shrink: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 7px !important;
+  background: #f0fdf4 !important;
+  border: 1px solid #bbf7d0 !important;
+  border-radius: 12px !important;
+  padding: 7px 12px !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  color: #166534 !important;
+  cursor: pointer !important;
+  white-space: nowrap !important;
+  max-width: 290px !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
+  transition: all 0.15s ease !important;
+}
+
+.searched-route-chip:hover {
+  background: #dcfce7 !important;
+  border-color: #86efac !important;
+}
+
+.searched-route-chip:active {
+  transform: scale(0.97) !important;
+}
+
+.chip-rt-badge {
+  background: #175b43 !important;
+  color: #ffffff !important;
+  font-size: 10px !important;
+  font-weight: 800 !important;
+  padding: 3px 6px !important;
+  border-radius: 6px !important;
+  flex-shrink: 0 !important;
+}
+
+.chip-desc {
+  font-size: 11.5px !important;
+  color: #1e293b !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+/* 3. Bus Preferences Segmented 3-Column Radio Group */
+.bus-preferences {
+  display: grid !important;
+  grid-template-columns: repeat(3, 1fr) !important;
+  gap: 8px !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  border: none !important;
+  padding: 0 !important;
+  margin: 6px 0 14px !important;
+}
+
+.bus-preferences label {
+  min-width: 0 !important;
+  margin: 0 !important;
+  display: block !important;
+}
+
+.bus-preferences span {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  white-space: nowrap !important;
+  padding: 10px 4px !important;
+  font-size: 11.5px !important;
+  font-weight: 700 !important;
+  border-radius: 10px !important;
+  background: #f1f5f9 !important;
+  color: #475569 !important;
+  border: 1.5px solid #e2e8f0 !important;
+  transition: all 0.15s ease !important;
+}
+
+.bus-preferences input:checked + span {
+  background: #dcfce7 !important;
+  color: #15803d !important;
+  border-color: #86efac !important;
+  font-weight: 800 !important;
+  box-shadow: 0 1px 4px rgba(22, 101, 52, 0.12) !important;
+}
+
+/* 4. Planner Options Grid (Departure & Priority Side-by-Side) */
+.planner-options-grid {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  gap: 10px !important;
+  margin-bottom: 14px !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+.planner-datetime-row,
+.planner-priority-row {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 5px !important;
+  margin-bottom: 0 !important;
+  min-width: 0 !important;
+  width: 100% !important;
+}
+
+.planner-datetime-row label,
+.planner-priority-row label {
+  font-size: 10px !important;
+  font-weight: 800 !important;
+  color: #64748b !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.6px !important;
+  white-space: nowrap !important;
+}
+
+.planner-datetime-input,
+.planner-priority-select {
+  background: #f8fafc !important;
+  border: 1.5px solid #cbd5e1 !important;
+  border-radius: 10px !important;
+  padding: 9px 8px !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  color: #1e293b !important;
+  width: 100% !important;
+  min-height: 44px !important;
+  box-sizing: border-box !important;
+  outline: none !important;
+  transition: border-color 0.15s ease, background 0.15s ease !important;
+}
+
+.planner-datetime-input:focus,
+.planner-priority-select:focus {
+  border-color: #10b981 !important;
+  background: #ffffff !important;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.12) !important;
+}
+
+/* 5. Journey Result Metrics: Smart Chips Row (Always 1 Single Row) */
+.smart-chips-row {
+  display: flex !important;
+  align-items: center !important;
+  flex-wrap: nowrap !important;
+  overflow-x: auto !important;
+  gap: 6px !important;
+  margin-bottom: 12px !important;
+  scrollbar-width: none !important;
+  padding-bottom: 2px !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+.smart-chips-row::-webkit-scrollbar {
+  display: none !important;
+}
+
+.smart-chip,
+.smart-crowd-chip {
+  flex-shrink: 0 !important;
+  white-space: nowrap !important;
+  font-size: 11.5px !important;
+  padding: 5px 8px !important;
+  border-radius: 8px !important;
+  box-sizing: border-box !important;
+}
+
+/* 6. Journey Fare Row: Single Sleek Horizontal Bar */
+.journey-fare-row {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  flex-wrap: nowrap !important;
+  gap: 8px !important;
+  background: #f8fafc !important;
+  border: 1px dashed #cbd5e1 !important;
+  border-radius: 11px !important;
+  padding: 8px 10px !important;
+  margin: 10px 0 8px !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+.fare-pills-wrap {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  flex-wrap: nowrap !important;
+  min-width: 0 !important;
+  overflow: hidden !important;
+}
+
+.fare-cost-tag {
+  background: #175b43 !important;
+  color: #ffffff !important;
+  font-size: 11px !important;
+  font-weight: 800 !important;
+  padding: 3px 8px !important;
+  border-radius: 6px !important;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+}
+
+.pink-ticket-tag {
+  background: #fdf2f8 !important;
+  color: #be185d !important;
+  border: 1px solid #fbcfe8 !important;
+  font-size: 10px !important;
+  font-weight: 800 !important;
+  padding: 3px 6px !important;
+  border-radius: 6px !important;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+}
+
+.btn-get-ticket {
+  background: #eef2ff !important;
+  border: 1px solid #c7d2fe !important;
+  color: #4338ca !important;
+  font-size: 11px !important;
+  font-weight: 800 !important;
+  padding: 5px 10px !important;
+  border-radius: 8px !important;
+  cursor: pointer !important;
+  margin-left: auto !important;
+  flex-shrink: 0 !important;
+  white-space: nowrap !important;
+  transition: all 0.15s ease !important;
+}
+
+.btn-get-ticket:active {
+  background: #e0e7ff !important;
+  transform: scale(0.96) !important;
+}
+
+/* 7. Journey Card Actions: Symmetrical 2-Column Button Grid */
+.journey-card-actions-grid {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  gap: 8px !important;
+  margin-top: 10px !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+.btn-view-map-link {
+  width: 100% !important;
+  min-height: 44px !important;
+  padding: 10px 8px !important;
+  border-radius: 12px !important;
+  font-size: 12.5px !important;
+  font-weight: 750 !important;
+  background: #f0fdf4 !important;
+  color: #166534 !important;
+  border: 1.5px solid #bbf7d0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  cursor: pointer !important;
+  margin: 0 !important;
+  white-space: nowrap !important;
+  transition: all 0.15s ease !important;
+  box-sizing: border-box !important;
+}
+
+.btn-view-map-link:active {
+  background: #dcfce7 !important;
+  transform: scale(0.98) !important;
+}
+
+.journey-card-actions-grid .btn-track-live-route {
+  width: 100% !important;
+  min-height: 44px !important;
+  padding: 10px 8px !important;
+  border-radius: 12px !important;
+  font-size: 12.5px !important;
+  font-weight: 750 !important;
+  background: linear-gradient(135deg, #175b43, #0f3d2e) !important;
+  color: #ffffff !important;
+  border: none !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  cursor: pointer !important;
+  margin: 0 !important;
+  white-space: nowrap !important;
+  box-shadow: 0 3px 10px rgba(23, 91, 67, 0.22) !important;
+  transition: all 0.15s ease !important;
+  box-sizing: border-box !important;
+}
+
+.journey-card-actions-grid .btn-track-live-route:active {
+  transform: scale(0.98) !important;
+}
+
+/* 8. Nearby Actions: Balanced 2-Button Grid */
+.nearby-actions {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  gap: 10px !important;
+  margin: 14px 0 !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+.nearby-actions button {
+  width: 100% !important;
+  min-height: 44px !important;
+  white-space: nowrap !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  border-radius: 12px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
+}
+
+/* 9. Nearby Stop Route Item: No Awkward Wrap */
+.stop-route-wrapper {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  margin-bottom: 6px !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+}
+
+.stop-route-wrapper .stop-route {
+  flex: 1 !important;
+  min-width: 0 !important;
+  width: auto !important;
+}
+
+.stop-route-wrapper .btn-track-route-bus {
+  flex-shrink: 0 !important;
+  white-space: nowrap !important;
+  font-size: 11.5px !important;
+  padding: 6px 10px !important;
+  border-radius: 8px !important;
+}
+
+/* 10. Fleet Preview Banner & Nearest Bus Line */
+.nearest-bus-line {
+  display: flex !important;
+  align-items: center !important;
+  flex-wrap: nowrap !important;
+  gap: 6px !important;
+  font-size: 11.5px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+.nearest-dist {
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+.fleet-chip-top {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 6px !important;
+  flex-wrap: nowrap !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+.fleet-badges-wrap {
+  display: flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  flex-shrink: 0 !important;
+  white-space: nowrap !important;
+}
+
+/* 11. Active Ride Banner: Clean Single-Row */
+.active-ride-banner {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  flex-wrap: nowrap !important;
+  gap: 10px !important;
+  box-sizing: border-box !important;
+}
+
+.ride-banner-left {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  min-width: 0 !important;
+  overflow: hidden !important;
+}
+
+.ride-banner-text {
+  min-width: 0 !important;
+  overflow: hidden !important;
+}
+
+.ride-banner-text strong,
+.ride-banner-text small {
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  display: block !important;
+}
+
+.ride-banner-actions {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  flex-shrink: 0 !important;
+}
+
+/* 12. Bottom Navigation Rail */
+.rail {
+  width: 100% !important;
+  max-width: 520px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-around !important;
+  box-sizing: border-box !important;
+}
+
+.mobile-tab {
+  flex: 1 !important;
+  min-width: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 6px 2px !important;
+}
+
+.mobile-tab span {
+  white-space: nowrap !important;
+  font-size: 11px !important;
+  font-weight: 650 !important;
+}
+
+/* 13. Elevated Card Polish */
+.journey-planner-card,
+.bus-search-card,
+.smart-journey-card,
+.nearby-stop {
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 18px !important;
+  box-shadow: 0 4px 20px -2px rgba(15, 23, 42, 0.05), 0 2px 6px -1px rgba(15, 23, 42, 0.03) !important;
+}

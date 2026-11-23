@@ -11,10 +11,10 @@
 <title>Delhi Transit · Your city, connected</title>
 <meta name="description" content="Plan Delhi bus journeys, find nearby stops and follow live bus positions.">
 <link rel="manifest" href="/manifest.json">
-<link rel="icon" type="image/svg+xml" href="/assets/icon.svg?v=20261123-2">
-<link rel="apple-touch-icon" href="/assets/icon.svg?v=20261123-2">
-<link rel="stylesheet" href="/assets/styles.css?v=20261123-2">
-<link rel="stylesheet" href="/assets/redesign.css?v=20261123-2">
+<link rel="icon" type="image/svg+xml" href="/assets/icon.svg?v=20261123-3">
+<link rel="apple-touch-icon" href="/assets/icon.svg?v=20261123-3">
+<link rel="stylesheet" href="/assets/styles.css?v=20261123-3">
+<link rel="stylesheet" href="/assets/redesign.css?v=20261123-3">
 </head>
 <body>
 
@@ -221,19 +221,20 @@
               <label><input type="radio" name="bus-type" value="non-ac"><span>▤ Non-AC</span></label>
             </fieldset>
 
-            <!-- Date and Time -->
-            <div class="planner-datetime-row">
-              <label for="rider-departure">Departure Date & Time</label>
-              <input id="rider-departure" type="datetime-local" class="planner-datetime-input">
-            </div>
+            <!-- Date/Time and Priority options side-by-side grid -->
+            <div class="planner-options-grid">
+              <div class="planner-datetime-row">
+                <label for="rider-departure">Departure</label>
+                <input id="rider-departure" type="datetime-local" class="planner-datetime-input">
+              </div>
 
-            <!-- Priority -->
-            <div class="planner-priority-row">
-              <label for="journey-priority">Priority</label>
-              <select id="journey-priority" class="planner-priority-select" aria-label="Journey priority">
-                <option value="fastest">⚡ Fastest journey</option>
-                <option value="comfortable">🛋️ Most comfortable (Seats Likely)</option>
-              </select>
+              <div class="planner-priority-row">
+                <label for="journey-priority">Priority</label>
+                <select id="journey-priority" class="planner-priority-select" aria-label="Journey priority">
+                  <option value="fastest">⚡ Fastest</option>
+                  <option value="comfortable">🛋️ Comfortable</option>
+                </select>
+              </div>
             </div>
 
             <!-- Find bus button -->
@@ -316,7 +317,7 @@
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="/assets/rider.js?v=20261123-2" defer></script><script src="/assets/mobile-flow.js?v=20261123-2" defer></script>
+<script src="/assets/rider.js?v=20261123-3" defer></script><script src="/assets/mobile-flow.js?v=20261123-3" defer></script>
 <dialog id="profile-dialog"><form method="dialog"><button class="close-profile" aria-label="Close profile">×</button></form><div class="profile-avatar">♙</div><h2>Your rider profile</h2><p>Preferences and recent destinations are stored on this device.</p><label for="rider-name">Your name</label><input id="rider-name" maxlength="40" placeholder="Enter your name"><button id="save-profile" class="search-button">Save profile</button><p id="profile-status" aria-live="polite"></p></dialog>
 
 <!-- Digital Delhi Bus Ticket Modal (Chartr / One Delhi style) -->
