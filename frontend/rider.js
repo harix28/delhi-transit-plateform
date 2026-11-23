@@ -1390,10 +1390,7 @@ planButton.onclick = async () => {
           </div>
           <button type="button" class="btn-get-ticket">E-Ticket ➔</button>
         </div>
-        <div class="smart-card-action-grid">
-          <button type="button" class="btn-start-ride-card">🚀 Start Ride</button>
-          <button type="button" class="btn-view-map-link">🗺️ View Map</button>
-        </div>
+        <button type="button" class="btn-view-map-link" style="width:100%;margin-top:6px;padding:12px;border-radius:12px;font-weight:700;background:#e2f2e9;color:#065f46;border:1px solid #a7f3d0;display:flex;align-items:center;justify-content:center;gap:8px;font-size:14px;">🗺️ View Corridor on Map</button>
         <button type="button" class="btn-track-live-route" style="margin-top:8px;">Track Route Station-by-Station ➔</button>
       `;
 
