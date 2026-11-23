@@ -756,11 +756,6 @@ if (busSearchInput && busSearchResults) {
 // Native Animated Splash Landing Screen Controller
 const splashEl = $('app-splash');
 if (splashEl) {
-  const label = splashEl.querySelector('.splash-loading-label');
-  setTimeout(() => { if (label) label.textContent = 'Connecting routes and stops…'; }, 500);
-  setTimeout(() => { if (label) label.textContent = 'Updating bus positions…'; }, 1000);
-  setTimeout(() => { if (label) label.textContent = 'Ready!'; }, 1500);
-
   function dismissSplash() {
     if (!splashEl || splashEl.classList.contains('dismissed')) return;
     splashEl.classList.add('dismissed');
@@ -770,7 +765,8 @@ if (splashEl) {
     }, 550);
   }
 
-  const splashTimer = setTimeout(dismissSplash, 1900);
+  // Auto-dismiss smoothly after exactly 2 seconds
+  const splashTimer = setTimeout(dismissSplash, 2000);
   splashEl.addEventListener('click', dismissSplash);
 }
 
