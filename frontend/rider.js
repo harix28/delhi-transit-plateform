@@ -862,8 +862,7 @@ if (clearFilterBtn) {
 function formatRoute(r) {
   if (!r) return '';
   return String(r)
-    .replace(/(?:\b|_)UP\b/gi, '')
-    .replace(/(?:\b|_)DOWN\b/gi, '')
+    .replace(/(?:_|\s|-)*(?:UP|DOWN)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
 }

@@ -19,7 +19,7 @@ _sim_coords = None
 def clean_route_name(name: str) -> str:
     if not name:
         return ""
-    return re.sub(r'(?i)(?:_|\b)(?:UP|DOWN)\b', '', str(name)).strip()
+    return re.sub(r'(?i)[_\s-]*(?:UP|DOWN)\b', '', str(name)).strip()
 
 
 @lru_cache(maxsize=1)
