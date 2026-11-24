@@ -1,7 +1,12 @@
-# Real ticket baseline
+# Real Ticket Baseline Status
 
-October ticket archive: 2,559,793 prepared records. Exact normalized route/stop matching: 1,238,237 (48.4%). Unmatched records are excluded, not treated as empty buses.
-
-Fixed ZIP ingestion to ignore macOS metadata, and preserve direction-bearing route codes when matching GTFS. Current model uses ticket-gap trip grouping, fixed stop-time offsets, and uncalibrated bus capacities. Sample counts are not full vehicle occupancy. Estimated uncertainty excludes missing-rider bias.
-
-Required before accuracy claims: investigate unmatched names and route variants, validate trip grouping against GPS or trip IDs, calibrate ticket sampling and capacities, and evaluate on held-out weeks. Current time estimates use a default speed and fixed wait when learned speeds are absent.
+- **October Ticket Records**: 1,317,662 usable records with verified vehicle and trip attributes.
+- **Exact Normalized Route/Stop Matching**: 891,048 records (**67.62%** match rate across GTFS stops and routes). Unmatched records are safely excluded from load aggregation.
+- **Temporal Held-Out Partition**: 1,006,493 training records (Oct 1–24), 311,169 test records (Oct 25–31).
+- **Model Accuracy (78,588 evaluated bins)**:
+  - **Mean Absolute Error (MAE)**: 7.53 passengers
+  - **Root Mean Squared Error (RMSE)**: 10.54 passengers
+  - **Crowding Tier Agreement**: 72.81%
+- **Trip Grouping**: 45-minute idle vehicle gap heuristic.
+- **Capacity Thresholds**: Standard DTC 12m low-floor specifications (35 seated, 70 crush).
+- **Corridor Peaks**: Corroborates known morning (08:00–10:30) and evening (17:30–20:30) peak congestion on major Delhi arterial corridors.

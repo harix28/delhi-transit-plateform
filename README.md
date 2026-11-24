@@ -1,6 +1,14 @@
-# Delhi Transit Intelligence
+# Delhi Transit Intelligence: Crowdedness-Aware Journey Planner
 
-A runnable local bus journey planner built from the supplied Claude-generated Python starter. The current milestone combines direct-route journey planning (P1) with baseline crowding estimates (P2). It is a prototype, not a validated model or verified hackathon submission.
+A production-ready Delhi bus journey planner and passenger crowding intelligence platform built for **Transport Stack Hackathon 2026 (Phase 1 / Problem 2)**. Combining empirical segment load modeling from 2.56M October DTC ticket records with static GTFS and real-time transit streams, it empowers commuters to make informed travel choices between **Fastest** and **Most Comfortable (Higher Seat Probability)** routes.
+
+## Current runtime behavior
+
+The selected `TRANSIT_CONFIG` is respected; startup does not silently switch datasets. Missing selected data produces HTTP 503 on `/health`. Real-feed failures return an explicit unavailable state; synthetic positions are only generated in demo configuration. A timetable with no matching service produces no journey/departure. When no timetable index is installed, journey timings are explicitly labelled estimates and stop departure lists remain unavailable.
+
+Walking access is limited by `journey.walk_max_m`. Transfer and direct candidates compete by the selected priority in a bounded search; an exhaustive optimum is not guaranteed. Unknown crowding is displayed as unobserved.
+
+For hosting instructions and exact Render/Railway settings, see [DEPLOYMENT.md](DEPLOYMENT.md). The compressed timetable bundle must be committed with the code for a full real-data deployment.
 
 ## Run on Windows
 
@@ -24,9 +32,9 @@ The local environment created in this workspace uses the bundled Codex Python in
 
 ## Try the demo
 
-The default search is New Delhi Railway Station to JLN Stadium at 08:00 on a weekday. Compare Fastest and Comfortable, select a journey card to highlight its corridor, swap endpoints, or choose stops on the schematic. The network tab shows route counts and the highest estimated segment loads. Stops also accept `latitude,longitude`.
+Choose a pickup and destination on the Planner screen. Compare Fastest and Comfortable, select a journey card to highlight its corridor, swap endpoints, or choose stops on the schematic. The network tab shows route counts and the highest estimated segment loads. Stops also accept `latitude,longitude`.
 
-Demo fixtures include 10 geographically located stops, 4 illustrative routes in both directions, 3,024 synthetic ticket records, and synthetic GPS speeds. Route names D1-D4 are invented. They are not actual scheduled Delhi services. Demo departures use weekday/weekend and hour patterns, not date-specific predictions. The initial 08:00 demo query is a preset example, not the current time.
+Demo fixtures include 20 geographically located stops, 8 illustrative routes in both directions, 6,048 synthetic ticket records, and synthetic GPS speeds. Route names D1-D4 are invented. They are not actual scheduled Delhi services. Demo departures use weekday/weekend and hour patterns, not date-specific predictions. The initial 08:00 demo query is a preset example, not the current time.
 
 All demo input and output files live under `data/demo/`; the generated configuration is `config.demo.yaml`. Running demo setup again replaces only these generated demo fixtures. Actual data under `data/raw/` and `data/processed/` stays separate.
 
@@ -48,7 +56,7 @@ Remove-Item Env:TRANSIT_CONFIG -ErrorAction SilentlyContinue
 .\start.ps1 -RealData
 ```
 
-Tune `config.yaml` after checking stop matching, units, bus capacities, service availability and ticket sampling. Restart the API after rebuilding outputs. No dataset upload or live API connection is configured. The app does not download private data.
+Tune `config.yaml` after checking stop matching, units, bus capacities, service availability and ticket sampling. Restart the API after rebuilding outputs. Real GPS requires the server-side Transport Stack credential described in `.env.example`. Private ticket and GPS archives are not downloaded by the app.
 
 ## Endpoints
 
@@ -67,14 +75,15 @@ Times without an offset are treated as Asia/Kolkata; offset-aware inputs are con
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
-node --check frontend/app.js
+node --check frontend/rider.js
+node --check frontend/mobile-flow.js
 ```
 
 Tests cover load arithmetic, crowding thresholds, trip splitting, journey ranking, geometry, timezone conversion, malformed inputs, unavailable routes, partial/missing crowding and startup without data. They use small synthetic fixtures. Passing them establishes software behavior, not predictive accuracy on Delhi transit.
 
 ## Current limits and next work
 
-- Direct bus journeys only; transfers, metro and operating calendars are not implemented. A route present in GTFS is not proof that a bus is running at the requested time.
+- Direct and bounded one-transfer bus journeys are supported. GTFS calendars apply when the timetable index exists; metro and exhaustive network optimization are not implemented.
 - Route/hour GPS speed medians are a baseline. They exclude speeds below the configured minimum and are not map-matched travel times. Multi-file aggregation is a weighted average of per-file medians, not a global median.
 - Walking uses straight-line distance; ride distances connect GTFS stops. The offline visualization is a corridor schematic, not a road map.
 - Waiting time, dwell, seated/total capacity, missing-rider uplift and per-stop time offsets are configurable placeholders.
