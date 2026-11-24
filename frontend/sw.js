@@ -1,5 +1,5 @@
 // Only cache static GET resources. Account and transit responses always use the network.
-const CACHE_NAME = 'delhi-transit-v5';
+const CACHE_NAME = 'delhi-transit-v6';
 const STATIC_ASSETS = ['/', '/manifest.json', '/assets/styles.css', '/assets/redesign.css', '/assets/layout.css', '/assets/vehicle-motion.js', '/assets/rider.js', '/assets/mobile-flow.js', '/assets/icon.svg'];
 self.addEventListener('install', event => {
   self.skipWaiting();

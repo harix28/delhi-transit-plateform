@@ -85,7 +85,9 @@ async function openBusTracker(vehicle, routeId, routeName, segments, isBackgroun
   }
   let crowdNote = $('tracker-crowding-note');
   if (!crowdNote) { crowdNote=element('p',''); crowdNote.id='tracker-crowding-note'; sheet.querySelector('.tracker-header').after(crowdNote); }
-  crowdNote.textContent = `Historical ticket estimates · ${Math.round((currentCrowdingContext?.coverage || 0)*100)}% stretch coverage · ${currentCrowdingContext?.confidence || 'low'} sample confidence. Not live occupancy.`;
+  crowdNote.replaceChildren(...['Historical', `${Math.round((currentCrowdingContext?.coverage || 0)*100)}% coverage`, `${currentCrowdingContext?.confidence || 'low'} sample`].map(text => element('span', text)));
+  crowdNote.title = 'Historical ticket-derived crowding, stretch coverage and sample-count confidence. Not live occupancy or a seat guarantee.';
+  crowdNote.setAttribute('aria-label', crowdNote.textContent + '. ' + crowdNote.title);
 
   safeSetText('tracker-route-num', routeCode);
   const acBadge = $('tracker-ac-badge');
@@ -93,6 +95,7 @@ async function openBusTracker(vehicle, routeId, routeName, segments, isBackgroun
 
   const crowdBadge = $('tracker-crowd-badge');
   if (crowdBadge) {
+    if (crowdBadge.parentElement !== sheet) crowdNote.before(crowdBadge);
     let worst = 'unknown';
     if (Array.isArray(currentTrackedSegments) && currentTrackedSegments.length) {
       if (currentTrackedSegments.some(s => s.level === 'unknown')) worst = 'unknown';
@@ -564,7 +567,7 @@ function toggleSplitMap() {
   if (isSplitMapActive) {
     if (appEl) appEl.classList.add('tracker-split-active');
     if (sheet) sheet.classList.add('split-map-active');
-    if (btnText) btnText.textContent = '📱 Full View';
+    if (btnText) btnText.textContent = '☷';
     const mapPanel = document.querySelector('.map-panel');
     if (mapPanel) {
       mapPanel.style.display = 'block';
@@ -579,7 +582,7 @@ function toggleSplitMap() {
   } else {
     if (appEl) appEl.classList.remove('tracker-split-active');
     if (sheet) sheet.classList.remove('split-map-active');
-    if (btnText) btnText.textContent = '🗺️ Split Map';
+    if (btnText) btnText.textContent = '🗺';
     setTimeout(() => {
       if (typeof map !== 'undefined' && map.invalidateSize) {
         map.invalidateSize();
@@ -605,7 +608,7 @@ function closeBusTracker() {
   if (appEl) appEl.classList.remove('tracker-split-active');
   isSplitMapActive = false;
   const btnText = $('tracker-map-btn-text');
-  if (btnText) btnText.textContent = '🗺️ Split Map';
+  if (btnText) btnText.textContent = '🗺';
   stopAutoTrackerPolling();
   if (paths) paths.clearLayers();
   setTimeout(() => {
@@ -1043,7 +1046,7 @@ function updateFeedStatus(data) {
   feedSynthetic = !!data.synthetic;
   const fresh = (data.vehicles || []).filter(v => !v.stale).length;
   const feedTime = data.feed_timestamp ? new Intl.DateTimeFormat('en-IN', {timeZone: 'Asia/Kolkata',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).format(new Date(data.feed_timestamp * 1000)) : '';
-  const text = feedSynthetic ? 'Demo fleet · simulated' : data.available ? `${fresh} buses with fresh GPS${feedTime ? ' · ' + feedTime + ' IST' : ''}` : 'Live GPS unavailable';
+  const text = feedSynthetic ? 'Demo fleet · simulated' : data.available ? `${fresh} buses · GPS ${feedTime || 'available'}` : 'Live GPS unavailable';
   safeSetText('full-map-fleet-count', text);
   safeSetText('dataset-pill', feedSynthetic ? 'Demo' : data.available ? 'Live GPS' : 'GPS unavailable');
   safeSetText('data-notice', feedSynthetic ? 'Simulated positions for demonstration' : data.source);
@@ -1053,6 +1056,7 @@ function updateFeedStatus(data) {
     $('bus-search-card').prepend(banner);
   }
   banner.textContent = text;
+  banner.title = data.synthetic ? 'Simulated demonstration positions' : 'Fresh reported GPS positions. Provider timestamp shown in India time.';
   document.querySelector('.app').dataset.feed = feedSynthetic ? 'demo' : data.available ? 'live' : 'unavailable';
 }
 async function refresh() {
@@ -2026,9 +2030,9 @@ planButton.onclick = async () => {
       const isTop = idx === 0;
       let recBadgeText = null;
       if (isTop && isComfortable) {
-        recBadgeText = '⚡ SMART RECOMMENDED · SEATS LIKELY';
+        recBadgeText = 'Recommended · lower crowding';
       } else if (isTop) {
-        recBadgeText = priorityVal === 'comfortable' ? 'Recommended · historical comfort' : 'Recommended · fastest found';
+        recBadgeText = priorityVal === 'comfortable' ? 'Recommended · comfort' : 'Recommended · fastest';
       } else if (isComfortable) {
         recBadgeText = 'Lower historical crowding';
       }
@@ -2133,8 +2137,8 @@ planButton.onclick = async () => {
       }
 
       const transferPillHtml = o.transfers
-        ? `<span class="transfer-pill ${o.transfers > 1 ? 'multi' : ''}">${o.transfers} transfer${o.transfers > 1 ? 's' : ''}</span>`
-        : `<span class="direct-pill">Direct Bus</span>`;
+        ? `<span class="transfer-pill ${o.transfers > 1 ? 'multi' : ''}">${o.transfers} change${o.transfers > 1 ? 's' : ''}</span>`
+        : `<span class="direct-pill">Direct</span>`;
 
       html += `
         <div class="smart-journey-header">
@@ -2154,28 +2158,31 @@ planButton.onclick = async () => {
           <span class="stop-name dest">${o.alight.name}</span>
         </div>
         <div class="smart-chips-row">
-          <span class="smart-chip">🚶 ${o.walk_min} min walk</span>
-          <span class="smart-chip">⏳ ~${o.wait_min} min wait</span>
-          <span class="smart-chip">🚌 ${o.ride_min} min ride</span>
-          <span class="smart-crowd-chip ${crowdClass}">● ${crowdLabel}</span>
+          <span class="smart-chip">Walk ${o.walk_min} min</span>
+          <span class="smart-chip">Wait ${o.wait_min} min</span>
+          <span class="smart-chip">Ride ${o.ride_min} min</span>
         </div>
+        <div class="crowding-label-row"><span class="smart-crowd-chip ${crowdClass}">● ${crowdLabel}</span></div>
         ${o.transfers && o.transfer_stop && (!o.legs || o.legs.length <= 1) ? `<div class="smart-transfer-info">🔁 Change bus at <strong>${o.transfer_stop}</strong> · ~${o.transfer_min} min buffer</div>` : ''}
         ${legsHtml}
         <p class="journey-time-basis">${o.time_basis || 'Timing estimate'}${d.synthetic ? ' · Synthetic demo' : ''}</p>
-        <p class="crowding-reliability">Historical crowding · ${Math.round((o.crowding_coverage || 0) * 100)}% stretch coverage · ${o.confidence || 'low'} sample confidence. Not a seat guarantee.</p>
+        <div class="crowding-reliability"><span>Historical</span><span>${Math.round((o.crowding_coverage || 0) * 100)}% coverage</span><span>${o.confidence || 'low'} sample</span></div><small class="crowding-disclaimer">Historical estimate · no seat guarantee</small>
         ${fleetPreviewHtml}
         <div class="journey-fare-row">
           <div class="fare-pills-wrap">
-            <span class="fare-cost-tag">🎫 ₹${fareObj.standard} (Non-AC) · ❄ ₹${fareObj.ac} (AC)</span>
-            <span class="pink-ticket-tag">🌸 Free Pink Pass (Women)</span>
+            <span class="fare-cost-tag">Non-AC ₹${fareObj.standard} · AC ₹${fareObj.ac}</span>
+            <span class="pink-ticket-tag">Pink pass ₹0</span>
           </div>
         </div>
         <div class="journey-card-actions-single">
-          <button type="button" class="btn-open-checkpoint-timeline">🚌 View Route Checkpoints & Live Timeline ›</button>
+          <button type="button" class="btn-open-checkpoint-timeline">🚌 View route & stops ›</button>
         </div>
       `;
 
       card.innerHTML = html;
+      card.querySelectorAll('.stop-name, .leg-step-stops, .leg-step-route, .smart-route-badge, .smart-rec-badge, .smart-chip, .journey-time-basis, .smart-transfer-info, .leg-transfer-divider').forEach(el => { el.title = el.textContent.trim(); });
+      const reliability = card.querySelector('.crowding-reliability');
+      if (reliability) reliability.setAttribute('aria-label', `Historical ticket estimates: ${Math.round((o.crowding_coverage || 0)*100)} percent stretch coverage; ${o.confidence || 'low'} sample-count confidence. Not a seat guarantee.`);
 
       const showRouteOnMap = (e) => {
         if (e) e.stopPropagation();
