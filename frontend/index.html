@@ -15,8 +15,8 @@
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" type="image/svg+xml" href="/assets/icon.svg?v=20261124-1">
   <link rel="apple-touch-icon" href="/assets/icon.svg?v=20261124-1">
-  <link rel="stylesheet" href="/assets/styles.css?v=20261124-3">
-  <link rel="stylesheet" href="/assets/redesign.css?v=20261124-3">
+  <link rel="stylesheet" href="/assets/styles.css?v=20261124-4">
+  <link rel="stylesheet" href="/assets/redesign.css?v=20261124-4">
 </head>
 
 <body>
@@ -127,7 +127,6 @@
     </div>
 
     <header>
-      <button id="profile-button" aria-label="Open profile" class="profile-avatar">♙</button>
       <div class="wordmark">Delhi Transit</div>
       <div class="header-right">
         <button id="btn-install-pwa" class="btn-install-pwa" type="button" hidden
@@ -280,7 +279,6 @@
               <span class="live-pulse-dot"></span>
               <strong id="full-map-fleet-count">Live DTC Buses</strong>
             </div>
-            <button type="button" id="btn-back-to-planner" class="btn-map-pill-back">‹ Journey Planner</button>
           </div>
           <div class="map-bus-type-filters">
             <button type="button" class="btn-map-filter-chip active" data-filter="all">All Buses</button>
@@ -305,19 +303,20 @@
 
     <!-- Where Is My Bus / Live Station Tracker Sheet -->
     <section id="bus-tracker-sheet" class="bus-tracker-sheet" hidden aria-label="Live Bus Tracking">
+      <div class="sheet-drag-handle"></div>
       <div class="tracker-header">
-        <button type="button" id="close-tracker-btn" class="tracker-back-btn">‹ Back</button>
         <div class="tracker-title-box">
           <div class="tracker-route-pill">
             <span class="route-number-large" id="tracker-route-num">BUS</span>
             <span class="tracker-ac-tag" id="tracker-ac-badge">❄ AC</span>
+            <span class="tracker-crowd-tag" id="tracker-crowd-badge">● Live</span>
           </div>
           <p class="tracker-bus-reg" id="tracker-bus-reg">Live Bus Tracking</p>
         </div>
         <div class="tracker-header-actions">
-          <button type="button" id="btn-tracker-map-header" class="btn-tracker-map-header" title="View route and all stations on map"
-            aria-label="View route and all stations on map">
-            <span>🗺️ Map</span>
+          <button type="button" id="btn-tracker-split-map" class="btn-tracker-map-header" title="Toggle half-screen map view"
+            aria-label="Toggle half-screen map view">
+            <span id="tracker-map-btn-text">🗺️ Split Map</span>
           </button>
           <button type="button" id="tracker-refresh-btn" class="tracker-refresh-btn" title="Refresh bus position"
             aria-label="Refresh live bus position">
@@ -361,8 +360,8 @@
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="/assets/rider.js?v=20261124-3" defer></script>
-  <script src="/assets/mobile-flow.js?v=20261124-3" defer></script>
+  <script src="/assets/rider.js?v=20261124-4" defer></script>
+  <script src="/assets/mobile-flow.js?v=20261124-4" defer></script>
   <dialog id="profile-dialog">
     <form method="dialog"><button class="close-profile" aria-label="Close profile">×</button></form>
     <div class="profile-avatar">♙</div>
@@ -395,8 +394,8 @@
 
   <!-- Station Explorer Sheet (Shows all scheduled buses for a stop) -->
   <section id="station-explorer-sheet" class="station-explorer-sheet" hidden aria-label="Station Explorer">
+    <div class="sheet-drag-handle"></div>
     <div class="station-explorer-header">
-      <button type="button" id="btn-close-station-explorer" class="station-back-btn">‹ Back</button>
       <div class="station-header-info">
         <div class="station-icon-tag">🚏 BUS STAND</div>
         <h2 id="station-explorer-title">Station Name</h2>

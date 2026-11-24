@@ -9,9 +9,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy source code
 COPY . .
 
-# Generate demo data if processed data is not present
-RUN python scripts/create_demo.py
-
 ENV TRANSIT_CONFIG=config.yaml
 ENV PORT=8000
 EXPOSE 8000

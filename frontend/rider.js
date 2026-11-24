@@ -55,11 +55,37 @@ async function openBusTracker(vehicle, routeId, routeName, segments, isBackgroun
     sheet.hidden = false;
     sheet.scrollTop = 0;
     sheet.dataset.trackedRoute = String(queryRoute);
+    if (!isBackgroundUpdate) {
+      history.pushState({ screen: 'tracker', route: cleanR }, '');
+    }
+  }
+
+  // Automatically fetch corridor crowding if not passed
+  if (!currentTrackedSegments || !currentTrackedSegments.length) {
+    try {
+      const cRes = await get('/crowding/route/' + encodeURIComponent(cleanR));
+      if (cRes && cRes.segments && cRes.segments.length) {
+        currentTrackedSegments = cRes.segments;
+      }
+    } catch (_) { }
   }
 
   safeSetText('tracker-route-num', routeCode);
   const acBadge = $('tracker-ac-badge');
   if (acBadge) acBadge.style.display = isAC ? 'inline-block' : 'none';
+
+  const crowdBadge = $('tracker-crowd-badge');
+  if (crowdBadge) {
+    let worst = 'seats';
+    if (Array.isArray(currentTrackedSegments) && currentTrackedSegments.length) {
+      if (currentTrackedSegments.some(s => s.level === 'crowded')) worst = 'crowded';
+      else if (currentTrackedSegments.some(s => s.level === 'standing')) worst = 'standing';
+    }
+    const lbl = worst === 'seats' ? '🟢 Seats Likely' : (worst === 'standing' ? '🟡 Moderate Standing' : '🔴 High Crowding');
+    crowdBadge.className = `tracker-crowd-tag ${worst}`;
+    crowdBadge.textContent = lbl;
+    crowdBadge.hidden = false;
+  }
 
   const regEl = $('tracker-bus-reg');
   if (regEl) {
@@ -302,6 +328,7 @@ async function openBusTracker(vehicle, routeId, routeName, segments, isBackgroun
           const isUpcoming = idx > currentIdx;
 
           const node = element('div', '');
+          node.id = `station-node-${idx}`;
           node.className = `station-node ${isPassed ? 'passed' : ''} ${isCurrent ? 'current' : ''} ${isUpcoming ? 'upcoming' : ''}`;
           if (isCurrent) node.id = 'current-station-node';
 
@@ -402,10 +429,25 @@ async function openBusTracker(vehicle, routeId, routeName, segments, isBackgroun
               if (!res.departures || !res.departures.length) {
                 depContainer.append(element('p', 'No scheduled departures in the next 2 hours.'));
               } else {
-                res.departures.slice(0, 6).forEach(dep => {
+                res.departures.slice(0, 8).forEach(dep => {
+                  const cleanDepR = formatRoute(dep.route);
                   const row = element('div', '');
-                  row.className = 'mini-dep-row';
-                  row.innerHTML = `<strong>Route ${dep.route}</strong><span>In ${Math.ceil(dep.minutes)} min</span>`;
+                  row.className = 'mini-dep-row clickable-dep-route';
+                  row.title = `Tap to view Route ${cleanDepR} checkpoints & bus tracking`;
+                  row.innerHTML = `
+                    <div class="dep-badge-col">
+                      <span class="mini-dep-badge">${cleanDepR}</span>
+                      <span class="mini-dep-view">View Route ➔</span>
+                    </div>
+                    <div class="dep-time-col">
+                      <strong>In ${Math.ceil(dep.minutes)} min</strong>
+                      <small>${dep.departure || 'Scheduled'}</small>
+                    </div>
+                  `;
+                  row.onclick = (ev) => {
+                    ev.stopPropagation();
+                    openBusTracker(null, dep.route_id || dep.route, cleanDepR);
+                  };
                   depContainer.append(row);
                 });
               }
@@ -488,15 +530,68 @@ if (closeTrackerBtn) {
   };
 }
 
-const trackerMapHeaderBtn = $('btn-tracker-map-header');
-if (trackerMapHeaderBtn) {
-  trackerMapHeaderBtn.onclick = () => {
-    const sheet = $('bus-tracker-sheet');
-    if (sheet) sheet.hidden = true;
-    stopAutoTrackerPolling();
-    drawFullRouteOnMap(currentTrackedRouteId, currentTrackedRouteName, currentTrackedVehicle);
-  };
+let isSplitMapActive = false;
+
+function toggleSplitMap() {
+  isSplitMapActive = !isSplitMapActive;
+  const appEl = document.querySelector('.app');
+  const sheet = $('bus-tracker-sheet');
+  const btnText = $('tracker-map-btn-text');
+  
+  if (isSplitMapActive) {
+    if (appEl) appEl.classList.add('tracker-split-active');
+    if (sheet) sheet.classList.add('split-map-active');
+    if (btnText) btnText.textContent = '📱 Full View';
+    const mapPanel = document.querySelector('.map-panel');
+    if (mapPanel) {
+      mapPanel.style.display = 'block';
+      mapPanel.hidden = false;
+    }
+    setTimeout(() => {
+      if (typeof map !== 'undefined' && map.invalidateSize) {
+        map.invalidateSize();
+      }
+      drawFullRouteOnMap(currentTrackedRouteId, currentTrackedRouteName, currentTrackedVehicle);
+    }, 60);
+  } else {
+    if (appEl) appEl.classList.remove('tracker-split-active');
+    if (sheet) sheet.classList.remove('split-map-active');
+    if (btnText) btnText.textContent = '🗺️ Split Map';
+    setTimeout(() => {
+      if (typeof map !== 'undefined' && map.invalidateSize) {
+        map.invalidateSize();
+      }
+    }, 60);
+  }
 }
+window.toggleSplitMap = toggleSplitMap;
+
+const trackerSplitBtn = $('btn-tracker-split-map') || $('btn-tracker-map-header');
+if (trackerSplitBtn) {
+  trackerSplitBtn.onclick = toggleSplitMap;
+}
+
+function closeBusTracker() {
+  const sheet = $('bus-tracker-sheet');
+  if (sheet) {
+    sheet.hidden = true;
+    delete sheet.dataset.trackedRoute;
+    sheet.classList.remove('split-map-active');
+  }
+  const appEl = document.querySelector('.app');
+  if (appEl) appEl.classList.remove('tracker-split-active');
+  isSplitMapActive = false;
+  const btnText = $('tracker-map-btn-text');
+  if (btnText) btnText.textContent = '🗺️ Split Map';
+  stopAutoTrackerPolling();
+  if (paths) paths.clearLayers();
+  setTimeout(() => {
+    if (typeof map !== 'undefined' && map.invalidateSize) {
+      map.invalidateSize();
+    }
+  }, 60);
+}
+window.closeBusTracker = closeBusTracker;
 
 const trackerMapFullBtn = $('btn-tracker-view-full-map');
 if (trackerMapFullBtn) {
@@ -1005,6 +1100,14 @@ async function drawFullRouteOnMap(routeId, routeName, activeBus) {
             <p class="station-route-meta">Route ${cleanR} · Passenger Stand</p>
           </div>
         `);
+        stMarker.on('click', () => {
+          const el = document.getElementById(`station-node-${idx}`);
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            el.classList.add('station-flash-highlight');
+            setTimeout(() => el.classList.remove('station-flash-highlight'), 1800);
+          }
+        });
         stMarker.addTo(paths);
       });
 
@@ -1104,6 +1207,7 @@ window.drawFullRouteOnMap = drawFullRouteOnMap;
 async function openStationExplorer(stopId, stopName, distLabel) {
   const sheet = $('station-explorer-sheet');
   if (!sheet) return;
+  history.pushState({ screen: 'station', stopId }, '');
   safeSetText('station-explorer-title', stopName);
   safeSetText('station-explorer-meta', distLabel ? `~${distLabel} away` : 'Bus Stand');
   const container = $('station-departures-container');
@@ -1138,12 +1242,18 @@ async function openStationExplorer(stopId, stopName, distLabel) {
         <button type="button" class="btn-draw-station-route">🗺️ View Route</button>
       `;
 
+      row.style.cursor = 'pointer';
+      row.title = `Tap to view Route ${cleanR} checkpoints & live tracker`;
+      row.onclick = () => {
+        sheet.hidden = true;
+        openBusTracker(null, dep.route_id || cleanR, cleanR);
+      };
       const viewRouteBtn = row.querySelector('.btn-draw-station-route');
       if (viewRouteBtn) {
         viewRouteBtn.onclick = (e) => {
           e.stopPropagation();
           sheet.hidden = true;
-          drawFullRouteOnMap(dep.route_id || cleanR, cleanR);
+          openBusTracker(null, dep.route_id || cleanR, cleanR);
         };
       }
 
@@ -1261,6 +1371,7 @@ function openLocationPicker(mode) {
   currentLocPickerMode = mode;
   const overlay = $('location-search-screen');
   if (!overlay) return;
+  history.pushState({ screen: 'location-search', mode }, '');
   overlay.hidden = false;
   safeSetText('loc-search-header-title', mode === 'pickup' ? 'Select Pickup Station' : 'Select Destination Station');
   const input = $('loc-search-input');
@@ -1635,9 +1746,9 @@ document.querySelectorAll('input[name=bus-type]').forEach(r => {
     $('bus-type-note').textContent = r.value === 'all' ? 'Showing all buses. Bus type is unverified.' : 'Preference saved. AC / Non-AC filtering awaits verified vehicle data; all buses remain visible.';
   };
 });
-$('profile-button').onclick = () => { $('rider-name').value = readSaved('transit.name', ''); $('profile-dialog').showModal(); };
-$('save-profile').onclick = () => { const name = $('rider-name').value.trim(); const saved = saveLocal('transit.name', name); $('profile-status').textContent = saved ? 'Profile saved on this device.' : 'Storage unavailable in this browser.'; if (saved) { $('profile-button').textContent = name ? name[0].toUpperCase() : '♙'; $('profile-dialog').close(); } };
-const savedName = readSaved('transit.name', ''); if (typeof savedName === 'string' && savedName) $('profile-button').textContent = savedName[0].toUpperCase(); renderRecent();
+if ($('profile-button')) $('profile-button').onclick = () => { $('rider-name').value = readSaved('transit.name', ''); $('profile-dialog').showModal(); };
+$('save-profile').onclick = () => { const name = $('rider-name').value.trim(); const saved = saveLocal('transit.name', name); $('profile-status').textContent = saved ? 'Profile saved on this device.' : 'Storage unavailable in this browser.'; if (saved) { if ($('profile-button')) $('profile-button').textContent = name ? name[0].toUpperCase() : '♙'; $('profile-dialog').close(); } };
+const savedName = readSaved('transit.name', ''); if (typeof savedName === 'string' && savedName && $('profile-button')) $('profile-button').textContent = savedName[0].toUpperCase(); renderRecent();
 
 // Modern Smart Journey Planner Card Binding
 const planButton = $('find-bus-btn') || element('button', 'Find bus journeys');
@@ -1992,3 +2103,39 @@ const noteEl = $('bus-type-note');
 const typeMessage = () => { if (noteEl) noteEl.textContent = activeBusType === 'all' ? 'Showing all live buses. AC type, when known, is inferred from October tickets.' : 'Map filter: ' + (activeBusType === 'ac' ? 'AC' : 'Non-AC') + ' from consistent October ticket evidence. Unknown vehicles are hidden; journey options are not filtered.'; };
 activeBusType = ['ac', 'non-ac'].includes(preference) ? preference : 'all';
 document.querySelectorAll('input[name=bus-type]').forEach(r => { r.onchange = () => { activeBusType = r.value; saveLocal('transit.busType', r.value); typeMessage(); paint(); }; }); typeMessage();
+
+// =======================================================
+// SYSTEM BACK BUTTON & GESTURE NAVIGATION
+// =======================================================
+window.addEventListener('popstate', (e) => {
+  // 1. Close location search overlay if open
+  const locOverlay = $('location-search-screen');
+  if (locOverlay && !locOverlay.hidden) {
+    locOverlay.hidden = true;
+    return;
+  }
+  // 2. Close bus tracker sheet if open
+  const trackerSheet = $('bus-tracker-sheet');
+  if (trackerSheet && !trackerSheet.hidden) {
+    closeBusTracker();
+    return;
+  }
+  // 3. Close station explorer sheet if open
+  const stationSheet = $('station-explorer-sheet');
+  if (stationSheet && !stationSheet.hidden) {
+    stationSheet.hidden = true;
+    return;
+  }
+  // 4. Close profile dialog if open
+  const profileDialog = $('profile-dialog');
+  if (profileDialog && profileDialog.open) {
+    profileDialog.close();
+    return;
+  }
+  // 5. Exit full map mode back to planner
+  const appShell = document.querySelector('.app');
+  if (appShell && appShell.classList.contains('full-map-active')) {
+    if (typeof showScreen === 'function') showScreen('plan');
+    return;
+  }
+});
