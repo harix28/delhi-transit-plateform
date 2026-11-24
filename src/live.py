@@ -175,14 +175,15 @@ def get_vehicles():
                             }
                             _fetched = now
                             return _cache
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger("live").warning("Live GTFS-RT feed fetch failed: %s", e)
 
         # Fallback to high-fidelity live simulated fleet
         sim_vehicles = generate_simulated_vehicles(now)
         _cache = {
             "source": "Delhi Transport Stack (Live Fleet Simulation)",
-            "synthetic": False,
+            "synthetic": True,
             "feed_timestamp": int(now),
             "fetched_at": int(now),
             "vehicles": sim_vehicles

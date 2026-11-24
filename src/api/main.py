@@ -158,27 +158,58 @@ def journeys(from_: str = Query(..., alias="from", min_length=1, max_length=200)
 def route_crowding(route: str, day_type: Literal["weekday", "weekend"] = "weekday",
                    direction: int = Query(0, ge=0, le=1), half_hour: int = Query(17, ge=0, le=47)):
     p = ready()
-    if p.crowd_df is None:
+    cpath = ROOT / cfg.get("paths", {}).get("processed", "data/processed") / "crowding.parquet"
+    if not cpath.exists():
+        cpath = ROOT / "data/processed/crowding.parquet"
+    if not cpath.exists():
         raise HTTPException(503, "Crowding table not built yet")
-    df = p.crowd_df
-    f = df[(df.route_short == route.upper()) & (df.day_type == day_type)
-           & (df.direction_id == direction) & (df.half_hour == half_hour)].sort_values("seg")
+    try:
+        import pyarrow.parquet as pq
+        import pandas as pd
+        table = pq.read_table(
+            cpath,
+            filters=[
+                ("route_short", "==", route.upper()),
+                ("day_type", "==", day_type),
+                ("direction_id", "==", direction),
+                ("half_hour", "==", half_hour),
+            ]
+        )
+        f = table.to_pandas().sort_values("seg")
+    except Exception:
+        f = pd.DataFrame()
     cols = ["seg", "load_est", "load_low", "load_high", "ratio", "level", "confidence", "n_trips"]
-    return {"route": route.upper(), "segments": records(f[cols].round(2))}
+    existing_cols = [c for c in cols if c in f.columns]
+    return {"route": route.upper(), "segments": records(f[existing_cols].round(2)) if not f.empty else []}
 
 @app.get("/crowding/top")
 def top_crowded(day_type: Literal["weekday", "weekend"] = "weekday",
                 limit: int = Query(20, ge=1, le=200), min_confidence: Literal["low", "medium", "high"] = "medium"):
     p = ready()
-    if p.crowd_df is None:
+    cpath = ROOT / cfg.get("paths", {}).get("processed", "data/processed") / "crowding.parquet"
+    if not cpath.exists():
+        cpath = ROOT / "data/processed/crowding.parquet"
+    if not cpath.exists():
         raise HTTPException(503, "Crowding table not built yet")
-    df = p.crowd_df
-    f = df[(df.day_type == day_type) & (df.confidence.map(CONF_RANK) >= CONF_RANK[min_confidence])]
-    f = f.sort_values("ratio", ascending=False).head(limit)
+    try:
+        import pyarrow.parquet as pq
+        import pandas as pd
+        table = pq.read_table(
+            cpath,
+            filters=[("day_type", "==", day_type), ("level", "in", ["standing", "crowded"])]
+        )
+        f = table.to_pandas()
+        f = f[f.confidence.map(CONF_RANK) >= CONF_RANK[min_confidence]]
+        f = f.sort_values("ratio", ascending=False).head(limit)
+    except Exception:
+        f = pd.DataFrame()
+    if f.empty:
+        return {"day_type": day_type, "items": []}
     names = p.rs[["route_id", "direction_id", "seq", "stop_name", "stop_lat", "stop_lon"]].drop_duplicates(subset=["route_id", "direction_id", "seq"]).rename(columns={"seq": "seg", "stop_name": "from_stop"})
     f = f.merge(names, on=["route_id", "direction_id", "seg"], how="left")
     cols = ["route_short", "direction_id", "from_stop", "half_hour", "load_est", "ratio", "level", "confidence", "stop_lat", "stop_lon"]
-    return {"day_type": day_type, "items": records(f[cols].round(4))}
+    existing = [c for c in cols if c in f.columns]
+    return {"day_type": day_type, "items": records(f[existing].round(4))}
 
 @app.get("/", include_in_schema=False)
 def index():
@@ -316,7 +347,7 @@ def scheduled_departures(stop_id: str):
     if candidates.empty:
         candidates = rs[rs.route_short.astype(str).str.upper() == str(stop_id).upper()]
     if candidates.empty:
-        candidates = rs.head(8)
+        return {"source": "DTC Timetable", "departures": []}
 
     unique_routes = candidates.drop_duplicates(subset=["route_id"]).head(8)
     results = []

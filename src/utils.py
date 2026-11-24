@@ -34,7 +34,6 @@ def canonical_stop_text(s: pd.Series) -> pd.Series:
         (r"\b(mahipalpur)\b", "mahipal puri"),
         (r"\b(radisson|radission|reddison)\b", "radisson"),
         (r"\b(air india office)\b", ""),
-        (r"\b(isbt)\b", ""),
     ]
     for pattern, repl in replacements:
         s = s.str.replace(pattern, repl, regex=True)

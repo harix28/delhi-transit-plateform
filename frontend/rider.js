@@ -1768,8 +1768,8 @@ planButton.onclick = async () => {
       if (recBadgeText) {
         html += `<div class="smart-rec-badge ${isComfortable ? 'seat-green' : 'speed-blue'}">${recBadgeText}</div>`;
       }
-      const crowdLabel = o.crowding === 'seats' ? 'Seats likely' : (o.crowding === 'standing' ? 'Standing room' : 'High crowding');
-      const crowdClass = o.crowding || 'seats';
+      const crowdLabel = o.crowding === 'seats' ? 'Seats likely' : (o.crowding === 'standing' ? 'Standing room' : (o.crowding === 'crowded' ? 'High crowding' : 'Crowding unobserved'));
+      const crowdClass = o.crowding === 'crowded' ? 'alert-crowd' : (o.crowding === 'standing' ? 'standing' : (o.crowding === 'seats' ? 'seats' : 'unknown'));
 
       // Multi-leg breakdown HTML
       let legsHtml = '';
