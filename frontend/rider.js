@@ -40,8 +40,10 @@ async function openBusTracker(vehicle, routeId, routeName, segments, isBackgroun
   const sheet = $('bus-tracker-sheet');
   if (!sheet) return;
 
-  const routeCode = routeName || (vehicle && vehicle.route_id) || routeId || 'BUS';
-  const queryRoute = routeId || routeCode;
+  const rawRouteCode = routeName || (vehicle && vehicle.route_id) || routeId || 'BUS';
+  const cleanR = formatRoute(rawRouteCode);
+  const routeCode = cleanR || rawRouteCode;
+  const queryRoute = routeId || rawRouteCode;
   const busId = (vehicle && vehicle.id) ? ('Bus ' + vehicle.id) : ('Route ' + routeCode);
   const isAC = vehicle && vehicle.bus_type === 'ac';
 
@@ -1111,22 +1113,21 @@ async function drawFullRouteOnMap(routeId, routeName, activeBus) {
         stMarker.addTo(paths);
       });
 
-      // 3. START Station: Prominent Green Location Pointer Pin
+      // 3. START Station: Prominent Green Location Pointer Pin (Icon Only)
       const startStop = stopsList[0];
       const startPin = L.divIcon({
         className: 'journey-pointer-wrap',
         html: `
           <div class="route-location-pin start" title="Start / Boarding Stand: ${startStop.stop_name}">
-            <div class="pin-marker-body">
+            <div class="pin-marker-body icon-only">
               <span class="pin-logo">📍</span>
-              <span class="pin-label">START: ${startStop.stop_name}</span>
             </div>
             <div class="pin-pointer-tip"></div>
             <div class="pin-pulse-ring"></div>
           </div>
         `,
-        iconSize: [160, 48],
-        iconAnchor: [80, 44]
+        iconSize: [36, 42],
+        iconAnchor: [18, 42]
       });
 
       L.marker([startStop.stop_lat, startStop.stop_lon], { icon: startPin, zIndexOffset: 2500 })
@@ -1139,21 +1140,20 @@ async function drawFullRouteOnMap(routeId, routeName, activeBus) {
         `)
         .addTo(paths);
 
-      // 4. DESTINATION Station: Prominent Red Location Pointer Pin
+      // 4. DESTINATION Station: Prominent Red Location Pointer Pin (Icon Only)
       const endStop = stopsList[totalStops - 1];
       const endPin = L.divIcon({
         className: 'journey-pointer-wrap',
         html: `
           <div class="route-location-pin end" title="Destination Stand: ${endStop.stop_name}">
-            <div class="pin-marker-body">
+            <div class="pin-marker-body icon-only">
               <span class="pin-logo">🏁</span>
-              <span class="pin-label">DESTINATION: ${endStop.stop_name}</span>
             </div>
             <div class="pin-pointer-tip"></div>
           </div>
         `,
-        iconSize: [180, 48],
-        iconAnchor: [90, 44]
+        iconSize: [36, 42],
+        iconAnchor: [18, 42]
       });
 
       L.marker([endStop.stop_lat, endStop.stop_lon], { icon: endPin, zIndexOffset: 2500 })
@@ -1365,25 +1365,61 @@ function renderRecent() {
 }
 $('clear-recents').onclick = () => { recent = []; saveLocal('transit.recents', recent); renderRecent(); };
 
-// Location Search Overlay Controller (From & To)
-let currentLocPickerMode = 'pickup';
+// =======================================================
+// UNIFIED DUAL-LOCATION OVERLAY CONTROLLER (From & To)
+// =======================================================
+let activeLocField = 'pickup'; // 'pickup' or 'dest'
+let locPickerTimer = null;
+
+function setActiveLocField(field) {
+  activeLocField = field;
+  const rowFrom = $('loc-row-from');
+  const rowTo = $('loc-row-to');
+  const gpsLabel = $('picker-gps-label');
+  const fromInput = $('loc-search-from');
+  const toInput = $('loc-search-to');
+
+  if (field === 'pickup') {
+    if (rowFrom) rowFrom.classList.add('active-field');
+    if (rowTo) rowTo.classList.remove('active-field');
+    if (gpsLabel) gpsLabel.textContent = 'Use GPS for Pickup Stop';
+    if (fromInput) {
+      fromInput.focus();
+      triggerLocSearch(fromInput.value);
+    }
+  } else {
+    if (rowTo) rowTo.classList.add('active-field');
+    if (rowFrom) rowFrom.classList.remove('active-field');
+    if (gpsLabel) gpsLabel.textContent = 'Use GPS for Destination';
+    if (toInput) {
+      toInput.focus();
+      triggerLocSearch(toInput.value);
+    }
+  }
+}
+
 function openLocationPicker(mode) {
-  currentLocPickerMode = mode;
   const overlay = $('location-search-screen');
   if (!overlay) return;
-  history.pushState({ screen: 'location-search', mode }, '');
   overlay.hidden = false;
-  safeSetText('loc-search-header-title', mode === 'pickup' ? 'Select Pickup Station' : 'Select Destination Station');
-  const input = $('loc-search-input');
-  if (input) {
-    input.value = '';
-    input.placeholder = mode === 'pickup' ? 'Search pickup stop (e.g. Anand Vihar, AIIMS…)' : 'Search destination stop (e.g. Kashmere Gate…)';
-    input.focus();
+  history.pushState({ screen: 'location-search', mode: mode || 'pickup' }, '');
+
+  const fromInput = $('loc-search-from');
+  const toInput = $('loc-search-to');
+  const clearFrom = $('loc-clear-from');
+  const clearTo = $('loc-clear-to');
+
+  if (fromInput) {
+    fromInput.value = $('pickup-search') ? $('pickup-search').value : '';
+    if (clearFrom) clearFrom.hidden = !fromInput.value;
   }
-  const clearBtn = $('loc-search-clear-btn');
-  if (clearBtn) clearBtn.hidden = true;
-  const list = $('loc-search-results-list');
-  if (list) list.replaceChildren();
+  if (toInput) {
+    toInput.value = $('destination-search') ? $('destination-search').value : '';
+    if (clearTo) clearTo.hidden = !toInput.value;
+  }
+
+  setActiveLocField(mode || 'pickup');
+  updateLocActionButtons();
 }
 
 function closeLocationPicker() {
@@ -1391,73 +1427,186 @@ function closeLocationPicker() {
   if (overlay) overlay.hidden = true;
 }
 
-const locBackBtn = $('loc-search-back-btn');
-if (locBackBtn) locBackBtn.onclick = closeLocationPicker;
+function updateLocActionButtons() {
+  const findBtn = $('btn-picker-find-buses');
+  const fromVal = ($('pickup-search') && $('pickup-search').value.trim()) || ($('loc-search-from') && $('loc-search-from').value.trim());
+  const toVal = ($('destination-search') && $('destination-search').value.trim()) || ($('loc-search-to') && $('loc-search-to').value.trim());
 
-const locClearBtn = $('loc-search-clear-btn');
-if (locClearBtn) {
-  locClearBtn.onclick = () => {
-    const input = $('loc-search-input');
-    if (input) input.value = '';
-    locClearBtn.hidden = true;
-    const list = $('loc-search-results-list');
-    if (list) list.replaceChildren();
+  if (findBtn) {
+    findBtn.hidden = !(fromVal && toVal);
+  }
+}
+
+function renderLocStopItem(s) {
+  const item = element('button', '');
+  item.type = 'button';
+  item.className = 'loc-result-item';
+  item.innerHTML = `
+    <span class="loc-result-icon">🚏</span>
+    <div class="loc-result-text">
+      <strong>${s.stop_name}</strong>
+      <small>Delhi Bus Stand</small>
+    </div>
+    <span class="loc-result-arrow">›</span>
+  `;
+  item.onclick = () => {
+    if (activeLocField === 'pickup') {
+      $('pickup-search').value = s.stop_name;
+      window.pickupCoordinates = s.stop_lat + ',' + s.stop_lon;
+      window.pickupName = s.stop_name;
+      pickupText = s.stop_name;
+      safeSetText('pickup-label', 'Pickup selected');
+      if (pickupMarker) map.removeLayer(pickupMarker);
+      pickupMarker = L.circleMarker([s.stop_lat, s.stop_lon], { radius: 9, color: '#fff', fillColor: '#10b981', fillOpacity: 1, weight: 3 }).addTo(map).bindPopup(element('strong', 'Pickup: ' + s.stop_name));
+
+      const fromInput = $('loc-search-from');
+      if (fromInput) fromInput.value = s.stop_name;
+      const clearFrom = $('loc-clear-from');
+      if (clearFrom) clearFrom.hidden = false;
+
+      const toInput = $('loc-search-to');
+      if (toInput && !toInput.value.trim()) {
+        setActiveLocField('dest');
+        return;
+      }
+    } else {
+      selectDestination(s);
+      const toInput = $('loc-search-to');
+      if (toInput) toInput.value = s.stop_name;
+      const clearTo = $('loc-clear-to');
+      if (clearTo) clearTo.hidden = false;
+
+      const fromInput = $('loc-search-from');
+      if (fromInput && !fromInput.value.trim()) {
+        setActiveLocField('pickup');
+        return;
+      }
+    }
+
+    updateLocActionButtons();
+    if ($('pickup-search').value.trim() && $('destination-search').value.trim()) {
+      closeLocationPicker();
+      planButton.click();
+    }
+  };
+  return item;
+}
+
+function triggerLocSearch(query) {
+  clearTimeout(locPickerTimer);
+  const list = $('loc-search-results-list');
+  if (!list) return;
+  const q = String(query || '').trim();
+
+  if (q.length < 2) {
+    list.replaceChildren();
+    if (Array.isArray(recent) && recent.length) {
+      safeSetText('loc-results-header', 'Recent Searches');
+      recent.slice(0, 8).forEach(s => list.append(renderLocStopItem(s)));
+    } else {
+      safeSetText('loc-results-header', 'Suggested Stations');
+      list.innerHTML = '<div class="loc-search-empty">Type 2 or more letters to search all Delhi bus stands…</div>';
+    }
+    return;
+  }
+
+  safeSetText('loc-results-header', `Matching Bus Stops for "${q}"`);
+  locPickerTimer = setTimeout(async () => {
+    try {
+      const d = await get('/transit/search?q=' + encodeURIComponent(q));
+      list.replaceChildren();
+      if (!d.stops || !d.stops.length) {
+        list.innerHTML = `<div class="loc-search-empty">No matching bus stops found for "${q}". Try another spelling.</div>`;
+        return;
+      }
+      d.stops.forEach(s => list.append(renderLocStopItem(s)));
+    } catch (_) {
+      list.innerHTML = '<div class="loc-search-empty">Could not load search results. Please try again.</div>';
+    }
+  }, 180);
+}
+
+// Wire input events
+const locFromInput = $('loc-search-from');
+if (locFromInput) {
+  locFromInput.onfocus = () => setActiveLocField('pickup');
+  locFromInput.oninput = () => {
+    const clearFrom = $('loc-clear-from');
+    if (clearFrom) clearFrom.hidden = !locFromInput.value;
+    triggerLocSearch(locFromInput.value);
   };
 }
 
-let locPickerTimer;
-const locInput = $('loc-search-input');
-if (locInput) {
-  locInput.oninput = () => {
-    clearTimeout(locPickerTimer);
-    const q = locInput.value.trim();
-    if (locClearBtn) locClearBtn.hidden = !q;
-    const list = $('loc-search-results-list');
-    if (!list) return;
-    if (q.length < 2) {
-      list.replaceChildren();
-      return;
-    }
-    locPickerTimer = setTimeout(async () => {
-      try {
-        const d = await get('/transit/search?q=' + encodeURIComponent(q));
-        list.replaceChildren();
-        if (!d.stops || !d.stops.length) {
-          list.innerHTML = '<div class="loc-search-empty">No matching bus stops found. Try another spelling.</div>';
-          return;
-        }
-        d.stops.forEach(s => {
-          const item = element('button', '');
-          item.type = 'button';
-          item.className = 'loc-result-item';
-          item.innerHTML = `
-            <span class="loc-result-icon">🚏</span>
-            <div class="loc-result-text">
-              <strong>${s.stop_name}</strong>
-              <small>Delhi Bus Stand</small>
-            </div>
-            <span class="loc-result-arrow">›</span>
-          `;
-          item.onclick = () => {
-            if (currentLocPickerMode === 'pickup') {
-              $('pickup-search').value = s.stop_name;
-              window.pickupCoordinates = s.stop_lat + ',' + s.stop_lon;
-              window.pickupName = s.stop_name;
-              pickupText = s.stop_name;
-              $('pickup-label').textContent = 'Pickup selected';
-              if (pickupMarker) map.removeLayer(pickupMarker);
-              pickupMarker = L.circleMarker([s.stop_lat, s.stop_lon], { radius: 9, color: '#fff', fillColor: '#10b981', fillOpacity: 1, weight: 3 }).addTo(map).bindPopup(element('strong', 'Pickup: ' + s.stop_name));
-            } else {
-              selectDestination(s);
-            }
-            closeLocationPicker();
-          };
-          list.append(item);
-        });
-      } catch (_) {
-        list.innerHTML = '<div class="loc-search-empty">Could not load search results. Please try again.</div>';
-      }
-    }, 200);
+const locToInput = $('loc-search-to');
+if (locToInput) {
+  locToInput.onfocus = () => setActiveLocField('dest');
+  locToInput.oninput = () => {
+    const clearTo = $('loc-clear-to');
+    if (clearTo) clearTo.hidden = !locToInput.value;
+    triggerLocSearch(locToInput.value);
+  };
+}
+
+const locClearFrom = $('loc-clear-from');
+if (locClearFrom) {
+  locClearFrom.onclick = () => {
+    if (locFromInput) locFromInput.value = '';
+    $('pickup-search').value = '';
+    window.pickupCoordinates = null;
+    window.pickupName = null;
+    locClearFrom.hidden = true;
+    updateLocActionButtons();
+    setActiveLocField('pickup');
+  };
+}
+
+const locClearTo = $('loc-clear-to');
+if (locClearTo) {
+  locClearTo.onclick = () => {
+    if (locToInput) locToInput.value = '';
+    $('destination-search').value = '';
+    window.destinationCoordinates = null;
+    window.destinationName = null;
+    locClearTo.hidden = true;
+    updateLocActionButtons();
+    setActiveLocField('dest');
+  };
+}
+
+const locSwapBtn = $('loc-btn-swap');
+if (locSwapBtn) {
+  locSwapBtn.onclick = () => {
+    const pVal = $('pickup-search').value;
+    const dVal = $('destination-search').value;
+    $('pickup-search').value = dVal;
+    $('destination-search').value = pVal;
+
+    const pCoords = window.pickupCoordinates;
+    window.pickupCoordinates = window.destinationCoordinates;
+    window.destinationCoordinates = pCoords;
+
+    const pName = window.pickupName;
+    window.pickupName = window.destinationName;
+    window.destinationName = pName;
+
+    if (locFromInput) locFromInput.value = $('pickup-search').value;
+    if (locToInput) locToInput.value = $('destination-search').value;
+    if (locClearFrom) locClearFrom.hidden = !locFromInput.value;
+    if (locClearTo) locClearTo.hidden = !locToInput.value;
+
+    updateLocActionButtons();
+    triggerLocSearch(activeLocField === 'pickup' ? (locFromInput && locFromInput.value) : (locToInput && locToInput.value));
+  };
+}
+
+const locBackBtn = $('loc-search-back-btn');
+if (locBackBtn) locBackBtn.onclick = closeLocationPicker;
+
+const btnPickerFind = $('btn-picker-find-buses');
+if (btnPickerFind) {
+  btnPickerFind.onclick = () => {
+    closeLocationPicker();
+    planButton.click();
   };
 }
 
@@ -1466,28 +1615,40 @@ if (pickerGpsBtn) {
   pickerGpsBtn.onclick = () => {
     if (!navigator.geolocation) return;
     pickerGpsBtn.disabled = true;
-    safeSetText('loc-search-header-title', 'Locating your GPS position…');
     navigator.geolocation.getCurrentPosition(
       p => {
         pickerGpsBtn.disabled = false;
         const lat = p.coords.latitude;
         const lon = p.coords.longitude;
-        if (currentLocPickerMode === 'pickup') {
+        if (activeLocField === 'dest') {
+          $('destination-search').value = 'Current location';
+          window.destinationCoordinates = `${lat},${lon}`;
+          window.destinationName = 'Current location';
+          if (locToInput) locToInput.value = 'Current location';
+          if (locClearTo) locClearTo.hidden = false;
+          if (locFromInput && !locFromInput.value.trim()) {
+            setActiveLocField('pickup');
+          }
+        } else {
           $('pickup-search').value = 'Current location';
           window.pickupCoordinates = `${lat},${lon}`;
           window.pickupName = 'Current location';
           pickupText = 'Current location';
-          $('pickup-label').textContent = 'Current location selected';
-        } else {
-          $('destination-search').value = 'Current location';
-          window.destinationCoordinates = `${lat},${lon}`;
-          window.destinationName = 'Current location';
+          safeSetText('pickup-label', 'Current location selected');
+          if (locFromInput) locFromInput.value = 'Current location';
+          if (locClearFrom) locClearFrom.hidden = false;
+          if (locToInput && !locToInput.value.trim()) {
+            setActiveLocField('dest');
+          }
         }
-        closeLocationPicker();
+        updateLocActionButtons();
+        if ($('pickup-search').value.trim() && $('destination-search').value.trim()) {
+          closeLocationPicker();
+          planButton.click();
+        }
       },
       () => {
         pickerGpsBtn.disabled = false;
-        safeSetText('loc-search-header-title', 'Location unavailable');
       },
       { timeout: 10000 }
     );
@@ -1942,7 +2103,7 @@ planButton.onclick = async () => {
           </div>
         </div>
         <div class="journey-card-actions-single">
-          <button type="button" class="btn-view-map-link">🗺️ View Complete Route on Map</button>
+          <button type="button" class="btn-open-checkpoint-timeline">🚌 View Route Checkpoints & Live Timeline ›</button>
         </div>
       `;
 
@@ -2016,28 +2177,27 @@ planButton.onclick = async () => {
           });
         }
 
-        // 3. Location Pointer Logo at START (Pickup Stop)
+        // 3. Location Pointer Logo at START (Pickup Stop) (Icon Only)
         if (o.board && o.board.lat && o.board.lon) {
           const startPin = L.divIcon({
             className: 'journey-pointer-wrap',
             html: `
               <div class="route-location-pin start" title="Start / Pickup Stop: ${o.board.name}">
-                <div class="pin-marker-body">
+                <div class="pin-marker-body icon-only">
                   <span class="pin-logo">📍</span>
-                  <span class="pin-label">START: ${o.board.name}</span>
                 </div>
                 <div class="pin-pointer-tip"></div>
                 <div class="pin-pulse-ring"></div>
               </div>
             `,
-            iconSize: [74, 44],
-            iconAnchor: [37, 42]
+            iconSize: [36, 42],
+            iconAnchor: [18, 42]
           });
 
           L.marker([o.board.lat, o.board.lon], { icon: startPin, zIndexOffset: 2000 })
             .bindPopup(`
               <div class="map-station-popup">
-                <span class="station-seq-badge" style="background:#dcfce7;color:#15803d;">📍 START / PICKUP</span>
+                <span class="station-seq-badge" style="background:#dcfce7;color:#15803d;font-weight:800;">📍 START / PICKUP</span>
                 <strong>${o.board.name}</strong>
                 <p class="station-route-meta">Board Route ${o.route}</p>
               </div>
@@ -2045,27 +2205,26 @@ planButton.onclick = async () => {
             .addTo(paths);
         }
 
-        // 4. Location Pointer Logo at END (Destination Stop)
+        // 4. Location Pointer Logo at END (Destination Stop) (Icon Only)
         if (o.alight && o.alight.lat && o.alight.lon) {
           const endPin = L.divIcon({
             className: 'journey-pointer-wrap',
             html: `
               <div class="route-location-pin end" title="Destination Stop: ${o.alight.name}">
-                <div class="pin-marker-body">
+                <div class="pin-marker-body icon-only">
                   <span class="pin-logo">🏁</span>
-                  <span class="pin-label">DESTINATION: ${o.alight.name}</span>
                 </div>
                 <div class="pin-pointer-tip"></div>
               </div>
             `,
-            iconSize: [104, 44],
-            iconAnchor: [52, 42]
+            iconSize: [36, 42],
+            iconAnchor: [18, 42]
           });
 
           L.marker([o.alight.lat, o.alight.lon], { icon: endPin, zIndexOffset: 2000 })
             .bindPopup(`
               <div class="map-station-popup">
-                <span class="station-seq-badge" style="background:#fee2e2;color:#b91c1c;">🏁 DESTINATION</span>
+                <span class="station-seq-badge" style="background:#fee2e2;color:#b91c1c;font-weight:800;">🏁 DESTINATION</span>
                 <strong>${o.alight.name}</strong>
                 <p class="station-route-meta">Alight here</p>
               </div>
@@ -2085,10 +2244,28 @@ planButton.onclick = async () => {
         safeSetText('map-description', `${o.board.name} → ${o.alight.name} · ${stations.length || o.stops} stops along corridor`);
       };
 
-      const viewMapBtn = card.querySelector('.btn-view-map-link');
-      if (viewMapBtn) viewMapBtn.onclick = showRouteOnMap;
+      const openCheckpointView = (e) => {
+        if (e) e.stopPropagation();
+        const routeToTrack = o.route_id || o.route;
+        openBusTracker(nearestBus, routeToTrack, o.route, o.segments);
+      };
+
+      const checkpointBtn = card.querySelector('.btn-open-checkpoint-timeline');
+      if (checkpointBtn) checkpointBtn.onclick = openCheckpointView;
+      card.onclick = openCheckpointView;
+
+      // Also wire individual leg items for multi-leg journeys
+      const legItems = card.querySelectorAll('.smart-leg-item');
+      legItems.forEach((legEl, lIdx) => {
+        const legData = (o.legs && o.legs[lIdx]) || o;
+        legEl.style.cursor = 'pointer';
+        legEl.onclick = (e) => {
+          e.stopPropagation();
+          openBusTracker(null, legData.route_id || legData.route, legData.route, o.segments);
+        };
+      });
+
       showRouteOnMapGlobal = showRouteOnMap;
-      card.onclick = showRouteOnMap;
       journeyOutput.append(card);
     });
   } catch (e) {
@@ -2098,7 +2275,6 @@ planButton.onclick = async () => {
   }
 };
 
-const backToOptions = element('button', 'Back to journey options'); backToOptions.id = 'back-to-options'; backToOptions.onclick = () => document.querySelector('.app').classList.remove('journey-map'); document.querySelector('.map-panel').append(backToOptions);
 const noteEl = $('bus-type-note');
 const typeMessage = () => { if (noteEl) noteEl.textContent = activeBusType === 'all' ? 'Showing all live buses. AC type, when known, is inferred from October tickets.' : 'Map filter: ' + (activeBusType === 'ac' ? 'AC' : 'Non-AC') + ' from consistent October ticket evidence. Unknown vehicles are hidden; journey options are not filtered.'; };
 activeBusType = ['ac', 'non-ac'].includes(preference) ? preference : 'all';

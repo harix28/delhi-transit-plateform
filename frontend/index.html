@@ -15,8 +15,8 @@
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" type="image/svg+xml" href="/assets/icon.svg?v=20261124-1">
   <link rel="apple-touch-icon" href="/assets/icon.svg?v=20261124-1">
-  <link rel="stylesheet" href="/assets/styles.css?v=20261124-4">
-  <link rel="stylesheet" href="/assets/redesign.css?v=20261124-4">
+  <link rel="stylesheet" href="/assets/styles.css?v=20261124-5">
+  <link rel="stylesheet" href="/assets/redesign.css?v=20261124-5">
 </head>
 
 <body>
@@ -333,9 +333,6 @@
           <h3 id="tracker-current-station">Locating current station…</h3>
           <span class="tracker-next-eta" id="tracker-next-eta">Live along route</span>
         </div>
-        <button type="button" id="btn-tracker-view-full-map" class="btn-tracker-view-full-map">
-          🗺️ View Route on Map ›
-        </button>
       </div>
 
       <!-- All Running Buses of this Route Number & Nearest Bus Recommendation -->
@@ -360,8 +357,8 @@
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="/assets/rider.js?v=20261124-4" defer></script>
-  <script src="/assets/mobile-flow.js?v=20261124-4" defer></script>
+  <script src="/assets/rider.js?v=20261124-5" defer></script>
+  <script src="/assets/mobile-flow.js?v=20261124-5" defer></script>
   <dialog id="profile-dialog">
     <form method="dialog"><button class="close-profile" aria-label="Close profile">×</button></form>
     <div class="profile-avatar">♙</div>
@@ -372,24 +369,63 @@
     <p id="profile-status" aria-live="polite"></p>
   </dialog>
 
-  <!-- Dedicated Full-Screen Location Picker Screen for From & To -->
+  <!-- Dedicated Full-Screen Unified Location Picker Screen for Both From & To -->
   <div id="location-search-screen" class="location-search-screen" hidden>
     <div class="loc-search-header">
-      <button type="button" id="loc-search-back-btn" class="loc-search-back">‹ Back</button>
-      <h2 id="loc-search-header-title">Select Location</h2>
+      <h2 id="loc-search-header-title">Plan Route · Select Stops</h2>
+      <button type="button" id="loc-search-back-btn" class="loc-search-close" aria-label="Close">✕</button>
     </div>
-    <div class="loc-search-bar-wrap">
-      <span class="loc-search-icon">🔍</span>
-      <input id="loc-search-input" type="search" placeholder="Type station or bus stop name…" autocomplete="off" autocapitalize="off">
-      <button type="button" id="loc-search-clear-btn" class="loc-search-clear" hidden>×</button>
+
+    <!-- Unified Dual-Input Card -->
+    <div class="loc-unified-box">
+      <!-- FROM ROW -->
+      <div class="loc-unified-row" id="loc-row-from">
+        <div class="loc-icon-col">
+          <span class="loc-badge-dot from">🟢</span>
+        </div>
+        <div class="loc-input-col">
+          <span class="loc-input-label">FROM (BOARDING STOP)</span>
+          <input id="loc-search-from" type="search" placeholder="Enter pickup stop (e.g. Anand Vihar, AIIMS)" autocomplete="off" autocapitalize="off">
+        </div>
+        <button type="button" id="loc-clear-from" class="loc-clear-input" hidden aria-label="Clear From">×</button>
+      </div>
+
+      <!-- CONNECTOR & SWAP -->
+      <div class="loc-unified-divider">
+        <div class="loc-divider-line"></div>
+        <button type="button" id="loc-btn-swap" class="loc-swap-pill" title="Swap From and To" aria-label="Swap stops">⇅ Swap</button>
+        <div class="loc-divider-line"></div>
+      </div>
+
+      <!-- TO ROW -->
+      <div class="loc-unified-row" id="loc-row-to">
+        <div class="loc-icon-col">
+          <span class="loc-badge-dot to">🏁</span>
+        </div>
+        <div class="loc-input-col">
+          <span class="loc-input-label">TO (DESTINATION STOP)</span>
+          <input id="loc-search-to" type="search" placeholder="Where to? (e.g. Kashmere Gate, ISBT)" autocomplete="off" autocapitalize="off">
+        </div>
+        <button type="button" id="loc-clear-to" class="loc-clear-input" hidden aria-label="Clear To">×</button>
+      </div>
     </div>
+
+    <!-- Quick Action / Status Bar -->
     <div class="loc-search-quick-actions" id="loc-search-quick-actions">
       <button type="button" id="btn-picker-use-gps" class="btn-picker-gps">
         <span class="gps-dot-icon">⌖</span>
-        <span>Use Current GPS Location</span>
+        <span id="picker-gps-label">Use GPS for Pickup</span>
+      </button>
+      <button type="button" id="btn-picker-find-buses" class="btn-picker-find" hidden>
+        <span>Search Bus Journeys ›</span>
       </button>
     </div>
-    <div id="loc-search-results-list" class="loc-search-results-list"></div>
+
+    <!-- Suggestions List (Always below both inputs, cleanly scrollable) -->
+    <div class="loc-results-container">
+      <div class="loc-results-header" id="loc-results-header">Matching Bus Stops</div>
+      <div id="loc-search-results-list" class="loc-search-results-list"></div>
+    </div>
   </div>
 
   <!-- Station Explorer Sheet (Shows all scheduled buses for a stop) -->
