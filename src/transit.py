@@ -1,4 +1,5 @@
 from functools import lru_cache
+import re
 import pandas as pd
 from fastapi import HTTPException
 from src.config import ROOT
@@ -52,10 +53,14 @@ def route_geometry(route_id):
     if routes_file.exists() and trips_file.exists() and (parquet_path.exists() or (base / "shapes.txt").exists()):
         # 1. Resolve route code to GTFS route_id
         routes = pd.read_csv(routes_file, dtype=str)
+        norm_r = routes["route_short_name"].astype(str).str.upper().str.replace(r"[_\s-]*(?:UP|DOWN)$", "", regex=True)
+        clean_norm = re.sub(r"(?i)[_\s-]*(?:UP|DOWN)$", "", clean_id.upper())
         match = routes[
             (routes["route_id"] == clean_id) |
             (routes["route_short_name"].str.upper() == clean_id.upper()) |
-            (routes["route_long_name"].str.upper() == clean_id.upper())
+            (routes["route_long_name"].str.upper() == clean_id.upper()) |
+            (norm_r == clean_norm) |
+            (routes["route_short_name"].str.upper().str.startswith(clean_norm))
         ]
         target_ids = set(match["route_id"]) if not match.empty else {clean_id}
 
@@ -82,11 +87,16 @@ def route_geometry(route_id):
     # Fallback: connect stops from route_stops.parquet
     _, _, rs = tables()
     clean_upper = clean_id.upper()
-    matching = rs[rs.route_short.astype(str).str.upper() == clean_upper].sort_values("seq")
-    if matching.empty:
-        matching = rs[rs.route_id.astype(str) == clean_id].sort_values("seq")
+    norm_rs = rs.route_short.astype(str).str.upper().str.replace(r"[_\s-]*(?:UP|DOWN)$", "", regex=True)
+    clean_norm = re.sub(r"(?i)[_\s-]*(?:UP|DOWN)$", "", clean_upper)
+    matching = rs[
+        (rs.route_short.astype(str).str.upper() == clean_upper) |
+        (norm_rs == clean_norm) |
+        (rs.route_id.astype(str) == clean_id) |
+        (rs.route_short.astype(str).str.upper().str.startswith(clean_norm))
+    ].sort_values("seq")
     if not matching.empty:
-        coords = matching[["stop_lat", "stop_lon"]].values.tolist()
+        coords = matching.drop_duplicates(subset=["seq"])[["stop_lat", "stop_lon"]].values.tolist()
         return {"route_id": route_id, "paths": [coords]}
 
     raise HTTPException(404, f"No route geometry available for {route_id}")

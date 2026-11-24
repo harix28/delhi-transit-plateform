@@ -4390,4 +4390,141 @@ header {
   border-color: #10b981;
 }
 
+/* 22. Bus Stand Station Markers & Enhanced Route Map Elements */
+.map-station-stop-wrap {
+  background: transparent !important;
+  border: none !important;
+}
+
+.map-station-marker {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 2px solid #059669;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.map-station-marker:hover {
+  transform: scale(1.3);
+  border-color: #10b981;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.45);
+  z-index: 1000 !important;
+}
+
+.station-marker-icon {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.station-seq-num {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  background: #173e2d;
+  color: #ffffff;
+  font-size: 9px;
+  font-weight: 800;
+  padding: 1px 4px;
+  border-radius: 10px;
+  border: 1px solid #ffffff;
+  min-width: 10px;
+  text-align: center;
+  line-height: 1.2;
+}
+
+/* Enhanced Green Start & Red Destination Pins */
+.route-location-pin.start .pin-marker-body {
+  background: linear-gradient(135deg, #10b981 0%, #047857 100%);
+  border: 2px solid #ffffff;
+  box-shadow: 0 4px 14px rgba(4, 120, 87, 0.45);
+}
+
+.route-location-pin.end .pin-marker-body {
+  background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%);
+  border: 2px solid #ffffff;
+  box-shadow: 0 4px 14px rgba(185, 28, 28, 0.45);
+}
+
+.route-location-pin .pin-label {
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Route Search Dual Actions (Map + Track) */
+.search-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+}
+
+.btn-search-map-action {
+  background: #ecfdf5;
+  color: #047857;
+  border: 1px solid #a7f3d0;
+  font-size: 11px;
+  font-weight: 750;
+  padding: 5px 9px;
+  border-radius: 6px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-search-map-action:hover {
+  background: #d1fae5;
+  border-color: #10b981;
+}
+
+/* Tracker Sheet Map Action Buttons */
+.btn-tracker-map-header {
+  background: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  font-size: 12px;
+  font-weight: 750;
+  padding: 5px 12px;
+  border-radius: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: background 0.15s ease;
+}
+
+.btn-tracker-map-header:hover {
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.btn-tracker-view-full-map {
+  width: 100%;
+  background: #173e2d;
+  color: #ffffff;
+  border: none;
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: 12.5px;
+  font-weight: 750;
+  cursor: pointer;
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: background 0.15s ease;
+}
+
+.btn-tracker-view-full-map:hover {
+  background: #1f4f3a;
+}
+
 

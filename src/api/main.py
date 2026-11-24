@@ -238,17 +238,26 @@ def transit_route(route_id: str):
 
 @app.get("/transit/routes/{route_id}/stops")
 def route_stops(route_id: str, direction_id: int = 0):
+    import re
     from src.transit import tables
     _, _, rs = tables()
+    clean_r = str(route_id).strip().upper()
+    clean_norm = re.sub(r'(?i)[_\s-]*(?:UP|DOWN)$', '', clean_r)
+    norm_rs = rs.route_short.astype(str).str.upper().str.replace(r"[_\s-]*(?:UP|DOWN)$", "", regex=True)
+
     matches = rs[(rs.route_id == route_id) & (rs.direction_id == direction_id)].sort_values("seq")
     if matches.empty:
-        matches = rs[(rs.route_short == route_id.upper()) & (rs.direction_id == direction_id)].sort_values("seq")
+        matches = rs[(rs.route_short == clean_r) & (rs.direction_id == direction_id)].sort_values("seq")
+    if matches.empty:
+        matches = rs[(norm_rs == clean_norm) & (rs.direction_id == direction_id)].sort_values("seq")
     if matches.empty:
         matches = rs[rs.route_id == route_id].sort_values("seq")
     if matches.empty:
-        matches = rs[rs.route_short == route_id.upper()].sort_values("seq")
+        matches = rs[rs.route_short == clean_r].sort_values("seq")
     if matches.empty:
-        matches = rs[rs.route_short.str.startswith(route_id.upper(), na=False)].sort_values("seq")
+        matches = rs[norm_rs == clean_norm].sort_values("seq")
+    if matches.empty:
+        matches = rs[rs.route_short.str.upper().str.startswith(clean_norm, na=False)].sort_values("seq")
     if matches.empty:
         raise HTTPException(404, "No stops found for this route")
     matches = matches.drop_duplicates(subset=["seq"]).sort_values("seq")

@@ -488,6 +488,26 @@ if (closeTrackerBtn) {
   };
 }
 
+const trackerMapHeaderBtn = $('btn-tracker-map-header');
+if (trackerMapHeaderBtn) {
+  trackerMapHeaderBtn.onclick = () => {
+    const sheet = $('bus-tracker-sheet');
+    if (sheet) sheet.hidden = true;
+    stopAutoTrackerPolling();
+    drawFullRouteOnMap(currentTrackedRouteId, currentTrackedRouteName, currentTrackedVehicle);
+  };
+}
+
+const trackerMapFullBtn = $('btn-tracker-view-full-map');
+if (trackerMapFullBtn) {
+  trackerMapFullBtn.onclick = () => {
+    const sheet = $('bus-tracker-sheet');
+    if (sheet) sheet.hidden = true;
+    stopAutoTrackerPolling();
+    drawFullRouteOnMap(currentTrackedRouteId, currentTrackedRouteName, currentTrackedVehicle);
+  };
+}
+
 const trackerRefreshBtn = $('tracker-refresh-btn');
 if (trackerRefreshBtn) {
   trackerRefreshBtn.onclick = async () => {
@@ -665,24 +685,48 @@ if (busSearchInput && busSearchResults) {
 
           liveMatches.forEach(v => {
             const isAC = v.bus_type === 'ac';
+            const cleanR = formatRoute(v.route_id || 'BUS');
             const item = element('div', '');
             item.className = 'bus-search-item';
             item.innerHTML = `
               <div class="search-item-left">
-                <span class="search-rt-pill ${isAC ? 'ac' : ''}">${v.route_id || 'BUS'}</span>
+                <span class="search-rt-pill ${isAC ? 'ac' : ''}">${cleanR}</span>
                 <div class="search-item-texts">
                   <strong>Bus #${v.id}</strong>
                   <small>${isAC ? '❄ AC Electric' : 'Standard'} · Active live</small>
                 </div>
               </div>
-              <button type="button" class="btn-track-action">Track Station ➔</button>
+              <div class="search-item-actions">
+                <button type="button" class="btn-search-map-action" title="View route on map">🗺️ Map</button>
+                <button type="button" class="btn-track-action" title="Track station by station">Track ➔</button>
+              </div>
             `;
+            const mapBtn = item.querySelector('.btn-search-map-action');
+            if (mapBtn) {
+              mapBtn.onclick = (e) => {
+                e.stopPropagation();
+                busSearchResults.replaceChildren();
+                busSearchInput.value = '';
+                if (clearBusSearchBtn) clearBusSearchBtn.hidden = true;
+                drawFullRouteOnMap(v.route_id, cleanR, v);
+              };
+            }
+            const trackBtn = item.querySelector('.btn-track-action');
+            if (trackBtn) {
+              trackBtn.onclick = (e) => {
+                e.stopPropagation();
+                busSearchResults.replaceChildren();
+                busSearchInput.value = '';
+                if (clearBusSearchBtn) clearBusSearchBtn.hidden = true;
+                if (typeof recordUserSearchedRoute === 'function') recordUserSearchedRoute(v.route_id, 'Bus #' + v.id);
+                openBusTracker(v, v.route_id, cleanR);
+              };
+            }
             item.onclick = () => {
               busSearchResults.replaceChildren();
               busSearchInput.value = '';
               if (clearBusSearchBtn) clearBusSearchBtn.hidden = true;
-              if (typeof recordUserSearchedRoute === 'function') recordUserSearchedRoute(v.route_id, 'Bus #' + v.id);
-              openBusTracker(v, v.route_id, v.route_id);
+              drawFullRouteOnMap(v.route_id, cleanR, v);
             };
             busSearchResults.append(item);
           });
@@ -695,25 +739,49 @@ if (busSearchInput && busSearchResults) {
           busSearchResults.append(routesTitle);
 
           routeMatches.forEach(r => {
-            const activeBus = vehicles.find(v => !v.stale && (v.route_id === r.route_id || v.route_id === r.route_short_name));
+            const cleanR = formatRoute(r.route_short_name || r.route_id);
+            const activeBus = vehicles.find(v => !v.stale && (v.route_id === r.route_id || v.route_id === cleanR || v.route_id === r.route_short_name));
             const item = element('div', '');
             item.className = 'bus-search-item';
             item.innerHTML = `
               <div class="search-item-left">
-                <span class="search-rt-pill">${r.route_short_name || r.route_id}</span>
+                <span class="search-rt-pill">${cleanR}</span>
                 <div class="search-item-texts">
-                  <strong>${r.route_desc || r.route_long_name || ('Route ' + r.route_short_name)}</strong>
-                  <small>${activeBus ? '● Active bus running' : 'Scheduled route'}</small>
+                  <strong>${r.route_desc || r.route_long_name || ('Route ' + cleanR)}</strong>
+                  <small>${activeBus ? '● Active bus running' : 'Scheduled corridor'}</small>
                 </div>
               </div>
-              <button type="button" class="btn-track-action">Track Route ➔</button>
+              <div class="search-item-actions">
+                <button type="button" class="btn-search-map-action" title="View route on map">🗺️ Map</button>
+                <button type="button" class="btn-track-action" title="Track station by station">Track ➔</button>
+              </div>
             `;
+            const mapBtn = item.querySelector('.btn-search-map-action');
+            if (mapBtn) {
+              mapBtn.onclick = (e) => {
+                e.stopPropagation();
+                busSearchResults.replaceChildren();
+                busSearchInput.value = '';
+                if (clearBusSearchBtn) clearBusSearchBtn.hidden = true;
+                drawFullRouteOnMap(r.route_id, cleanR, activeBus);
+              };
+            }
+            const trackBtn = item.querySelector('.btn-track-action');
+            if (trackBtn) {
+              trackBtn.onclick = (e) => {
+                e.stopPropagation();
+                busSearchResults.replaceChildren();
+                busSearchInput.value = '';
+                if (clearBusSearchBtn) clearBusSearchBtn.hidden = true;
+                if (typeof recordUserSearchedRoute === 'function') recordUserSearchedRoute(cleanR, r.route_desc);
+                openBusTracker(activeBus, r.route_id, cleanR);
+              };
+            }
             item.onclick = () => {
               busSearchResults.replaceChildren();
               busSearchInput.value = '';
               if (clearBusSearchBtn) clearBusSearchBtn.hidden = true;
-              if (typeof recordUserSearchedRoute === 'function') recordUserSearchedRoute(r.route_short_name || r.route_id, r.route_desc);
-              openBusTracker(activeBus, r.route_id, r.route_short_name);
+              drawFullRouteOnMap(r.route_id, cleanR, activeBus);
             };
             busSearchResults.append(item);
           });
@@ -867,6 +935,172 @@ function formatRoute(r) {
     .trim();
 }
 
+async function drawFullRouteOnMap(routeId, routeName, activeBus) {
+  const cleanR = formatRoute(routeName || routeId);
+  const qRoute = routeId || cleanR;
+  paths.clearLayers();
+  filter = qRoute;
+  paint();
+
+  try {
+    const [shapeRes, stopsRes] = await Promise.all([
+      get('/transit/routes/' + encodeURIComponent(qRoute)).catch(() => ({ paths: [] })),
+      get('/transit/routes/' + encodeURIComponent(qRoute) + '/stops').catch(() => ({ stops: [] }))
+    ]);
+
+    const shapePaths = (shapeRes && shapeRes.paths) || [];
+    const stopsList = (stopsRes && stopsRes.stops) || [];
+
+    // 1. Draw route polyline with dark casing + vibrant emerald inner line
+    if (shapePaths.length > 0) {
+      shapePaths.forEach(p => {
+        L.polyline(p, {
+          color: '#064e3b',
+          weight: 7.5,
+          opacity: 0.8,
+          lineJoin: 'round',
+          lineCap: 'round'
+        }).addTo(paths);
+
+        L.polyline(p, {
+          color: '#10b981',
+          weight: 4.5,
+          opacity: 0.95,
+          lineJoin: 'round',
+          lineCap: 'round'
+        }).addTo(paths);
+      });
+    }
+
+    // 2. Intermediate bus stand markers with sequence badges
+    if (stopsList.length > 0) {
+      const totalStops = stopsList.length;
+      stopsList.forEach((st, idx) => {
+        if (idx === 0 || idx === totalStops - 1) return;
+        const stopSeq = st.seq !== undefined ? st.seq : (idx + 1);
+
+        const stationIcon = L.divIcon({
+          className: 'map-station-stop-wrap',
+          html: `
+            <div class="map-station-marker" title="Bus Stand ${stopSeq}: ${st.stop_name}">
+              <span class="station-marker-icon">🚏</span>
+              <span class="station-seq-num">${stopSeq}</span>
+            </div>
+          `,
+          iconSize: [28, 28],
+          iconAnchor: [14, 14]
+        });
+
+        const stMarker = L.marker([st.stop_lat, st.stop_lon], { icon: stationIcon, zIndexOffset: 500 });
+        stMarker.bindTooltip(`<strong>🚏 Stop ${stopSeq}:</strong> ${st.stop_name}`, {
+          permanent: false,
+          direction: 'top',
+          offset: [0, -14],
+          className: 'station-hover-tooltip'
+        });
+        stMarker.bindPopup(`
+          <div class="map-station-popup">
+            <span class="station-seq-badge">🚏 Bus Stand ${stopSeq} of ${totalStops}</span>
+            <strong>${st.stop_name}</strong>
+            <p class="station-route-meta">Route ${cleanR} · Passenger Stand</p>
+          </div>
+        `);
+        stMarker.addTo(paths);
+      });
+
+      // 3. START Station: Prominent Green Location Pointer Pin
+      const startStop = stopsList[0];
+      const startPin = L.divIcon({
+        className: 'journey-pointer-wrap',
+        html: `
+          <div class="route-location-pin start" title="Start / Boarding Stand: ${startStop.stop_name}">
+            <div class="pin-marker-body">
+              <span class="pin-logo">📍</span>
+              <span class="pin-label">START: ${startStop.stop_name}</span>
+            </div>
+            <div class="pin-pointer-tip"></div>
+            <div class="pin-pulse-ring"></div>
+          </div>
+        `,
+        iconSize: [160, 48],
+        iconAnchor: [80, 44]
+      });
+
+      L.marker([startStop.stop_lat, startStop.stop_lon], { icon: startPin, zIndexOffset: 2500 })
+        .bindPopup(`
+          <div class="map-station-popup">
+            <span class="station-seq-badge" style="background:#dcfce7;color:#15803d;font-weight:800;">📍 START / BOARDING STAND</span>
+            <strong>${startStop.stop_name}</strong>
+            <p class="station-route-meta">Route ${cleanR} · Terminal Origin</p>
+          </div>
+        `)
+        .addTo(paths);
+
+      // 4. DESTINATION Station: Prominent Red Location Pointer Pin
+      const endStop = stopsList[totalStops - 1];
+      const endPin = L.divIcon({
+        className: 'journey-pointer-wrap',
+        html: `
+          <div class="route-location-pin end" title="Destination Stand: ${endStop.stop_name}">
+            <div class="pin-marker-body">
+              <span class="pin-logo">🏁</span>
+              <span class="pin-label">DESTINATION: ${endStop.stop_name}</span>
+            </div>
+            <div class="pin-pointer-tip"></div>
+          </div>
+        `,
+        iconSize: [180, 48],
+        iconAnchor: [90, 44]
+      });
+
+      L.marker([endStop.stop_lat, endStop.stop_lon], { icon: endPin, zIndexOffset: 2500 })
+        .bindPopup(`
+          <div class="map-station-popup">
+            <span class="station-seq-badge" style="background:#fee2e2;color:#b91c1c;font-weight:800;">🏁 DESTINATION STAND</span>
+            <strong>${endStop.stop_name}</strong>
+            <p class="station-route-meta">Route ${cleanR} · Final Terminus</p>
+          </div>
+        `)
+        .addTo(paths);
+    }
+
+    // 5. Fit bounds to full road path or stops
+    const allCoords = [];
+    if (shapePaths.length > 0) {
+      shapePaths.forEach(p => p.forEach(pt => allCoords.push(pt)));
+    } else if (stopsList.length > 0) {
+      stopsList.forEach(s => allCoords.push([s.stop_lat, s.stop_lon]));
+    }
+    if (allCoords.length > 0) {
+      map.fitBounds(L.latLngBounds(allCoords), { padding: [60, 60] });
+    }
+
+    const startName = stopsList.length > 0 ? stopsList[0].stop_name : 'Start Stand';
+    const endName = stopsList.length > 0 ? stopsList[stopsList.length - 1].stop_name : 'Destination Stand';
+    const numStops = stopsList.length;
+
+    safeSetText('map-headline', 'Route ' + cleanR);
+    safeSetText('map-description', `${startName} → ${endName} · ${numStops} bus stands along corridor`);
+
+    const filterBar = $('active-route-filter-bar');
+    if (filterBar) {
+      filterBar.hidden = false;
+      safeSetText('filter-bar-text', `Route ${cleanR}: ${startName} ➔ ${endName} (${numStops} stands)`);
+    }
+
+    const trackerSheet = $('bus-tracker-sheet');
+    if (trackerSheet) trackerSheet.hidden = true;
+    const stationSheet = $('station-explorer-sheet');
+    if (stationSheet) stationSheet.hidden = true;
+
+    if (typeof showScreen === 'function') showScreen('map');
+    map.invalidateSize();
+  } catch (err) {
+    console.error('Error drawing route on map:', err);
+  }
+}
+window.drawFullRouteOnMap = drawFullRouteOnMap;
+
 async function openStationExplorer(stopId, stopName, distLabel) {
   const sheet = $('station-explorer-sheet');
   if (!sheet) return;
@@ -906,23 +1140,10 @@ async function openStationExplorer(stopId, stopName, distLabel) {
 
       const viewRouteBtn = row.querySelector('.btn-draw-station-route');
       if (viewRouteBtn) {
-        viewRouteBtn.onclick = async (e) => {
+        viewRouteBtn.onclick = (e) => {
           e.stopPropagation();
           sheet.hidden = true;
-          safeSetText('map-headline', 'Route ' + cleanR);
-          safeSetText('map-description', `Route ${cleanR} from ${stopName}`);
-          filter = dep.route_id || cleanR;
-          paint();
-          paths.clearLayers();
-          try {
-            const shape = await get('/transit/routes/' + encodeURIComponent(dep.route_id || cleanR));
-            if (shape.paths && shape.paths.length) {
-              shape.paths.forEach(p => L.polyline(p, { color: '#059669', weight: 5, opacity: 0.9 }).addTo(paths));
-              const bounds = L.latLngBounds(shape.paths.flat());
-              map.fitBounds(bounds, { padding: [50, 50] });
-            }
-          } catch (_) { }
-          if (typeof showScreen === 'function') showScreen('map');
+          drawFullRouteOnMap(dep.route_id || cleanR, cleanR);
         };
       }
 
@@ -1652,29 +1873,35 @@ planButton.onclick = async () => {
             if (sIdx === 0 || sIdx === stations.length - 1) return;
 
             const stopSeq = st.seq !== undefined ? st.seq : (sIdx + 1);
-            const stationDot = L.circleMarker([st.lat, st.lon], {
-              radius: 5,
-              fillColor: '#ffffff',
-              fillOpacity: 1,
-              color: '#15803d',
-              weight: 2.5
+            const stationIcon = L.divIcon({
+              className: 'map-station-stop-wrap',
+              html: `
+                <div class="map-station-marker" title="Bus Stand ${stopSeq}: ${st.name}">
+                  <span class="station-marker-icon">🚏</span>
+                  <span class="station-seq-num">${stopSeq}</span>
+                </div>
+              `,
+              iconSize: [28, 28],
+              iconAnchor: [14, 14]
             });
 
-            stationDot.bindTooltip(`<strong>Stop ${stopSeq}:</strong> ${st.name}`, {
+            const stMarker = L.marker([st.lat, st.lon], { icon: stationIcon, zIndexOffset: 500 });
+            stMarker.bindTooltip(`<strong>🚏 Stop ${stopSeq}:</strong> ${st.name}`, {
               permanent: false,
               direction: 'top',
-              className: 'station-map-tooltip'
+              offset: [0, -14],
+              className: 'station-hover-tooltip'
             });
 
-            stationDot.bindPopup(`
+            stMarker.bindPopup(`
               <div class="map-station-popup">
-                <span class="station-seq-badge">Stop ${stopSeq} of ${stations.length}</span>
+                <span class="station-seq-badge">🚏 Bus Stand ${stopSeq} of ${stations.length}</span>
                 <strong>${st.name}</strong>
-                <p class="station-route-meta">Route ${o.route} · intermediate station</p>
+                <p class="station-route-meta">Route ${o.route} · Bus Stand</p>
               </div>
             `);
 
-            stationDot.addTo(paths);
+            stMarker.addTo(paths);
           });
         }
 
@@ -1686,7 +1913,7 @@ planButton.onclick = async () => {
               <div class="route-location-pin start" title="Start / Pickup Stop: ${o.board.name}">
                 <div class="pin-marker-body">
                   <span class="pin-logo">📍</span>
-                  <span class="pin-label">START</span>
+                  <span class="pin-label">START: ${o.board.name}</span>
                 </div>
                 <div class="pin-pointer-tip"></div>
                 <div class="pin-pulse-ring"></div>
@@ -1715,7 +1942,7 @@ planButton.onclick = async () => {
               <div class="route-location-pin end" title="Destination Stop: ${o.alight.name}">
                 <div class="pin-marker-body">
                   <span class="pin-logo">🏁</span>
-                  <span class="pin-label">DESTINATION</span>
+                  <span class="pin-label">DESTINATION: ${o.alight.name}</span>
                 </div>
                 <div class="pin-pointer-tip"></div>
               </div>
@@ -1741,9 +1968,10 @@ planButton.onclick = async () => {
         }
 
         document.querySelector('.app').classList.add('journey-map');
+        if (typeof showScreen === 'function') showScreen('map');
         map.invalidateSize();
         safeSetText('map-headline', 'Route ' + o.route);
-        safeSetText('map-description', `${o.board.name} → ${o.alight.name} · ${stations.length || o.stops} stops along road`);
+        safeSetText('map-description', `${o.board.name} → ${o.alight.name} · ${stations.length || o.stops} stops along corridor`);
       };
 
       const viewMapBtn = card.querySelector('.btn-view-map-link');
