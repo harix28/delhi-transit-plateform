@@ -1,116 +1,78 @@
-# Delhi Transit Intelligence: Crowdedness-Aware Journey Planner
-## Phase 1 Technical Note & Methodology Report
-**Transport Stack Hackathon 2026 — Delhi**  
-**Challenge:** Problem 2 / Phase 1: Crowdedness-Aware Journey Planner  
+# Phase 1 technical note: crowdedness-aware bus journey planner
 
----
+Problem 2, Transport Stack Hackathon 2026. Status: working research prototype.
 
-## 1. Executive Summary
+## Contribution
 
-In public bus transit systems like Delhi's DTC network, travel time is only half the commuter experience—bus crowdedness directly governs passenger comfort, physical boarding feasibility, and dwell times. Standard transit applications rank itineraries solely by duration and transfers, frequently routing passengers onto heavily congested buses while less crowded alternatives run minutes later.
+A reproducible pipeline estimates historical bus crowding by route, direction, stop-to-stop stretch, weekday/weekend and half-hour. A static-GTFS planner compares candidate journeys by travel time or historical crowding. Live GPS is a separate position feed; it does not measure passenger occupancy.
 
-This platform solves **Problem 2 (Phase 1)** by:
-1. Transforming **2.56 million October 2026 e-ticketing and Electronic Ticketing Machine (ETM) records** into an empirical, segment-level crowding model stratified by route, direction, weekday/weekend, and half-hour time bins.
-2. Integrating this predictive crowding layer into an **ultra-responsive, full-featured journey planner** allowing commuters to compare **Fastest** vs. **Most Comfortable (Seats Likely)** routes.
-3. Providing real-time **live DTC bus tracking**, sequential **station checkpoint timelines**, and an interactive **half-screen split map visualization**.
+## Data and selection
 
----
+The supplied October 2026 archive contains about 2.56 million ticket records. The saved evaluation retains **1,317,662 usable records**, including a usable vehicle ID and valid journey fields. **891,048** match GTFS route/stop sequences: **67.62% of usable records**, not of all raw records. Dropped and unmatched records are excluded, not counted as empty buses. Vehicle IDs are present, not independently verified.
 
-## 2. Ingestion & Preprocessing Pipeline
+Names are normalized and matched using aliases and route direction codes. Ambiguous matches currently select a candidate; repeated stop names and route variants require investigation. GTFS uses one representative stop sequence per route/direction, so short workings and branches may be lost.
 
-### 2.1 Static GTFS & Network Topology
-- **Stops & Routes**: Normalized from Delhi static GTFS tables (`stops.txt`, `routes.txt`, `trips.txt`, `stop_times.txt`).
-- **Route Directionality**: GTFS routes with explicit directionality (e.g. `729UP`, `729DOWN`) are parsed and indexed by stop sequence. Longest representative trip shapes are extracted to ensure monotonic stop sequencing from origin to terminus.
-- **Memory Optimization**: Ingestion uses streaming `csv.DictReader` and downcasted data types (`int16`, `int8`, `category`), reducing memory footprint from >650MB down to **<100MB RAM**, ensuring deployment stability on container tiers (such as Render 512MB RAM).
+## Load reconstruction
 
-### 2.2 Stop Name Matching & Normalization
-- Ticket records store textual station names (`start_stop_name`, `end_stop_name`). These are matched against GTFS stop catalogs using regex token normalization:
-  - Removing punctuation, excess whitespace, and casing differences.
-  - Preserving transit identifiers such as `ISBT`, `Terminal`, `Depot`, and `Railway Station`.
-- Exact matching achieves **891,048 validly matched ticket journeys** (67.62% match rate across valid vehicle journeys). Unmatched tickets are safely excluded rather than artificially treated as zero-load.
+Tickets are grouped by vehicle, normalized route and leg. A gap over 45 minutes starts a new inferred trip. These groups are not verified operational trips; sparse sales can split one trip and successive journeys can merge. Tickets without a usable vehicle ID are dropped.
 
----
+Each ticket contributes its passenger count to all segments between the matched boarding and alighting stops. Segment time uses an assumed 2.5-minute offset from the inferred trip's first observed stop. Means include only inferred trips with crossing tickets. Unobserved trips/segments are not measured zero loads; this conditional sampling can bias estimates.
 
-## 3. Trip Reconstruction & Crowding Estimation
+The configured real-data estimate is ticket-derived mean load multiplied by **20**. This multiplier is an **unvalidated assumption**, not a measured correction for all passengers. Sensitivity is reported in `outputs/uplift_sensitivity.csv`. It must be calibrated against independent counts or defensible route/time-specific sampling evidence before occupancy accuracy claims.
 
-### 3.1 Trip Reconstruction via Gap Heuristic
-A single vehicle performs multiple round trips throughout a service day. Individual tickets are grouped into distinct physical trips using:
-$$\text{Trip Key} = (\text{vehicle\_number}, \text{route\_id}, \text{leg\_index})$$
-A new trip leg is initiated whenever a vehicle experiences an idle gap exceeding **45 minutes** between consecutive ticket timestamps. Missing vehicle IDs are isolated to prevent cross-vehicle contamination.
+## Capacity and confidence assumptions
 
-### 3.2 Directional Segment Load Calculation
-For each reconstructed bus trip:
-1. The boarding stop sequence $S_{\text{board}}$ and alighting stop sequence $S_{\text{alight}}$ are identified along the route's ordered stops ($S_1, S_2, \dots, S_N$).
-2. For each intermediate segment $(S_i \to S_{i+1})$ where $S_{\text{board}} \le S_i < S_{\text{alight}}$, the ticket's `passenger_count` is added to that segment's on-board load.
-3. Segment loads are aggregated across the month by:
-   - **Route & Direction** (e.g., `502_DOWN`)
-   - **Segment ID** (e.g., `StopA_to_StopB`)
-   - **Day Type** (`Weekday` vs. `Weekend`)
-   - **Time Bin** (48 half-hour intervals, $00:00$ to $23:30$ IST)
+- Seats class: scaled load at most **35**.
+- Standing class: scaled load above 35 and at most **65**.
+- Crowded class: scaled load above 65.
+- Sample confidence: medium at **4** inferred trips; high at **15**.
 
-### 3.3 Crowding Classification
-Based on Delhi DTC standard bus capacities (standard 12m low-floor buses with ~35 seating capacity and ~70 crush capacity), segment loads are classified into commuter-friendly tiers:
-- 🟢 **Seats Available (Seats Likely)**: Estimated passenger load $\le 35$
-- 🟡 **Standing Room (Moderate Standing)**: $35 < \text{Load} \le 70$
-- 🔴 **High Crowding**: Estimated passenger load $> 70$
+These are configured common thresholds, not verified capacities for every bus. Historical AC evidence does not establish seating capacity. Confidence represents sample count, not a calibrated probability of getting a seat. Normal-approximation intervals omit missing-ticket bias, capacity uncertainty, trip reconstruction error and uncertain alighting.
 
----
+## Journey integration
 
-## 4. Journey Planning & Dual-Priority Routing
+The planner enforces an 800 m access-walking limit, uses a timetable when present and compares direct and bounded one-transfer candidates. Transfer buffers are 2 minutes. Search is bounded and is not guaranteed globally optimal. Walking distances are straight lines and pedestrian accessibility is unverified.
 
-### 4.1 Routing Engine
-The planner supports both point-to-point stop queries and geographic coordinate searches:
-- **Direct Routes**: Discovers all GTFS routes connecting pickup and destination stops within walking tolerance ($750\text{m}$).
-- **Guaranteed Transfer Fallback**: When no direct route exists, a bounded 1-transfer routing algorithm evaluates key interchange junctions (e.g., Kashmere Gate, Rajiv Chowk, Anand Vihar ISBT, AIIMS) with a realistic 3-minute transfer penalty.
-- **DTC Fare Integration**: Automatically calculates standard DTC fares (₹5, ₹10, ₹15 for Non-AC; ₹10, ₹15, ₹20, ₹25 for AC) and highlights Delhi Government's **Free Pink Pass** for women riders.
+No matching scheduled service produces no journey. Without a timetable, timings are labelled estimates. Timetable values are not traffic-aware live ETAs. Route crowding queries resolve an exact route/direction and the selected India-time departure; missing stretches are explicitly unknown. Journey cards show coverage and sample confidence. Current journey summaries use the boarding-time bin across the ride; exact per-segment passage times remain future work.
 
-### 4.2 Priority Modes
-1. **⚡ Fastest Route (Minimum Travel Time)**:
-   $$\text{Score} = \text{Total Travel Time} = t_{\text{walk}} + t_{\text{wait}} + t_{\text{ride}} + t_{\text{transfer}}$$
-2. **🛋️ Most Comfortable (Higher Seat Availability)**:
-   Ranks journey candidates by seat probability along the ride corridor, outranking faster options that are severely congested.
+## Temporal evaluation and interpretation
 
----
+The saved evaluator trains on October 1-24 and holds out October 25-31, 2026. It compares matching route/direction/segment/day-type/half-hour bins with at least five inferred trips in each split.
 
-## 5. Model Evaluation & Empirical Validation
+| Diagnostic | Value | Meaning |
+| --- | --- | --- |
+| Evaluated bins | 78,588 | Qualified overlapping bins |
+| Total test bins | 849,259 | All held-out bins |
+| Evaluated share of test bins | 9.25% | Selection coverage, not city-network coverage |
+| MAE | 7.529 | Difference between scaled ticket-derived means |
+| RMSE | 10.536 | Same target and units |
+| Label agreement | 72.81% | Agreement with ticket-derived held-out labels |
+| Always-seats baseline | 59.76% | Most frequent training label applied to every evaluated bin |
 
-To rigorously measure predictive reliability, a strict temporal held-out experiment was conducted:
-- **Training Partition**: October 1 to October 24, 2026 ($1,006,493$ records).
-- **Held-Out Test Partition**: October 25 to October 31, 2026 ($311,169$ records).
+**These metrics are not measured occupancy accuracy.** The audit recomputes metrics from saved holdout artifacts; it does not repeat the complete raw-ticket evaluation. It verifies the sample rule and that saved scaling matches the current configuration, and records the comparison file's SHA-256 in `outputs/validation_audit.json`.
 
-### 5.1 Quantitative Results (`outputs/evaluation.json`)
-Across **78,588 overlapping route-segment time bins** (each having at least 5 observed trips in both training and test partitions):
+At uplift 1, all evaluated test bins fall in the seats class and label agreement is 100%. At uplift 20, agreement is 72.81%. This demonstrates why high class agreement alone does not validate crowding detection. Do not select a multiplier just to maximize this score.
 
-| Metric | Measured Value | Interpretation |
-|---|---|---|
-| **Usable Dataset** | 1,317,662 records | Filtered ticket records with verified vehicle IDs |
-| **GTFS Match Rate** | **67.62%** ($891,048$ trips) | Successfully resolved to GTFS route stop sequences |
-| **Mean Absolute Error (MAE)** | **7.53 passengers** | High precision in predicting on-board segment passenger load |
-| **Root Mean Squared Error (RMSE)**| **10.54 passengers** | Low variance even during volatile peak loading conditions |
-| **Crowding Tier Agreement** | **72.81%** | Commuter-facing crowding level matches held-out ground truth |
+## Pattern diagnostics
 
-### 5.2 Validation Against Known Real-World Patterns
-1. **Peak vs. Off-Peak Curves**:
-   - **Morning Peak (08:00 – 10:30 AM)**: Pronounced load spikes on radial corridors inbound to Connaught Place, Central Secretariat, and Nehru Place.
-   - **Evening Peak (17:30 – 20:30 PM)**: Asymmetric directional reversal outward toward residential and suburban hubs (Rohini, Dwarka, Anand Vihar).
-   - **Off-Peak (12:00 – 15:00 PM)**: Average segment loads drop by 38–46%, consistently shifting from *Standing Room* to *Seats Available*.
-2. **Weekday vs. Weekend Behavior**:
-   - Weekend volumes drop by ~32% on commercial routes while remaining steady on intercity corridors (ISBTs, New Delhi Railway Station).
+`outputs/pattern_diagnostics.csv` reports observed-bin conditional mean scaled ticket loads for morning 08:00-10:00, midday 12:00-15:00 and evening 17:00-20:00, separately by weekday/weekend. The weekday means are approximately 27.80, 24.96 and 26.96. These are descriptive sampled-bin means; they are not total ridership or independent validation against known peak conditions. Earlier claims of 38-46% reductions and 32% weekend reductions are unsupported and withdrawn.
 
----
+`outputs/route_holdout_diagnostics.csv` provides route/direction/day-type diagnostics within the selected evaluation subset. Independent corridor counts and route/time-specific sampling calibration remain outstanding.
 
-## 6. Assumptions & Known Limitations
+## Reproduction
 
-1. **E-Ticketing / Cash Sample**: E-tickets represent a subset of total DTC ridership. Non-ticketed passengers (e.g. women with Pink Passes issued without ETM records or pass-holders) are accounted for via configurable uplift factors.
-2. **Uniform Stop Offset**: Inter-stop travel time uses a 2.5-minute baseline offset in the absence of per-second live GPS traces.
-3. **Vehicle Variant Capacities**: The current baseline applies standard 12-metre bus capacity parameters ($35/70$). Future extensions can parameterize mini/midi buses as vehicle fleet registries are published.
+```powershell
+$env:TRANSIT_CONFIG = 'config.yaml'
+.\.venv\Scripts\python.exe scripts/run_pipeline.py gtfs
+.\.venv\Scripts\python.exe scripts/run_pipeline.py load
+.\.venv\Scripts\python.exe scripts/evaluate_crowding.py
+.\.venv\Scripts\python.exe scripts/audit_crowding.py
+.\.venv\Scripts\python.exe -m pytest -q
+node --test tests/vehicle-motion.test.cjs
+```
 
----
+Authorized raw ticket and GTFS inputs must be available locally. Raw tickets and credentials are excluded from Git. The audit requires the saved holdout CSV, which the evaluator regenerates. See DEPLOYMENT.md for hosting.
 
-## 7. Submission Artifact Checklist
+## Remaining validation work
 
-- [x] **Pipeline Code**: `scripts/run_pipeline.py` (GTFS ingestion, load builder, speed builder)
-- [x] **Model Evaluation Script**: `scripts/evaluate_crowding.py`
-- [x] **Output Artifacts**: `outputs/evaluation.json`, `outputs/segment_load.csv`, `outputs/route_match_quality.csv`
-- [x] **Live Interactive UI**: Unified location overlay, split map view, live bus checkpoints timeline, and dual-mode journey recommendations
-- [x] **Docker & Deployment**: Containerized with lightweight footprint (<100MB RAM) for high-availability cloud hosting
+Calibrate sampling/capacity assumptions; audit excluded records and ambiguous stop matches; validate inferred trips against GPS/trip IDs; compare multiple weeks and route/time slices; obtain independent passenger counts; quantify sensitivity to trip gaps and stop-time offsets. Runtime memory and hosted concurrency also require measurement; no less-than-100-MB or production-readiness guarantee is claimed.

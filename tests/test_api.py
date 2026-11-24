@@ -130,3 +130,33 @@ def test_departures_without_timetable_and_unknown_stop(client):
 
 def test_out_of_coverage_origin_has_no_journey(client):
     assert query(client, **{"from": "0,0"}).json()["options"] == []
+
+
+def test_live_feed_conditional_requests(client, monkeypatch):
+    from src import live
+    sample = {"source": "Test", "available": True, "synthetic": False,
+              "fetched_at": 100, "feed_timestamp": 90, "vehicles": []}
+    monkeypatch.setattr(live, "get_vehicles", lambda: sample)
+    first = client.get("/vehicles")
+    assert first.status_code == 200
+    assert first.headers["cache-control"] == "no-store"
+    second = client.get("/vehicles", headers={"If-None-Match": first.headers["etag"]})
+    assert second.status_code == 304
+    assert second.content == b""
+    sample["fetched_at"] += 10
+    assert client.get("/vehicles", headers={"If-None-Match": first.headers["etag"]}).status_code == 200
+
+
+def test_crowding_uses_selected_route_time_and_reports_coverage(client):
+    result = client.get("/crowding/route/R1", params={"depart":"2026-11-20T02:30:00Z"}).json()
+    assert result["half_hour"] == 16
+    assert result["day_type"] == "weekday"
+    assert result["route_id"] == "R1"
+    assert result["coverage"] == 1
+    assert result["confidence"] == "high"
+    assert result["segments"][0]["from"] == "Alpha"
+    assert result["segments"][0]["to"] == "Bravo"
+    empty = client.get("/crowding/route/R1", params={"depart":"2026-11-20T02:00:00+05:30"}).json()
+    assert empty["coverage"] == 0
+    assert empty["crowding"] == "unknown"
+    assert all(s["level"] == "unknown" for s in empty["segments"])

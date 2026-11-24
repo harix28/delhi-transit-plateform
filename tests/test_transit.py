@@ -58,3 +58,20 @@ def test_feed_failure_returns_unavailable_and_uses_cache(monkeypatch):
     assert live.get_vehicles()["available"] is False
     assert live.get_vehicles()["vehicles"] == []
     assert len(calls) == 1
+
+
+def test_concurrent_refresh_keeps_last_positions_and_rechecks_age(monkeypatch):
+    monkeypatch.setattr(live.time, "time", lambda: 1000)
+    monkeypatch.setattr(live, "_fetched", 900)
+    monkeypatch.setattr(live, "_cache", {"available": True, "synthetic": False,
+        "vehicles": [{"id": "bus", "timestamp": 950, "stale": False},
+                     {"id": "old", "timestamp": 600, "stale": False}]})
+    live._lock.acquire()
+    try:
+        result = live.get_vehicles()
+    finally:
+        live._lock.release()
+    assert result["refreshing"] is True
+    assert result["available"] is True
+    assert result["vehicles"][0]["stale"] is False
+    assert result["vehicles"][1]["stale"] is True

@@ -76,3 +76,6 @@ docker run --rm -p 8000:8000 --env-file .env delhi-transit
 - **Account writes return 403:** set `APP_ORIGIN` to the exact HTTPS origin. All account requests should use that same app origin.
 - **First visit is slow:** this is expected when a free Render instance wakes. Use an always-on instance if this delay is unacceptable.
 - **Old UI after a deploy:** reload the installed app. The service worker now updates static resources from the network and never caches account or transit API responses.
+
+
+Live-map responsiveness: the browser checks every 2 seconds using conditional requests, and the shared backend checks the provider every 10 seconds by default (`TRANSIT_FEED_REFRESH_SECONDS`, minimum 5; adjust to your provider quota). Unchanged responses return HTTP 304. Markers ease to newly reported coordinates over 700 ms and never extrapolate beyond confirmed GPS samples. This does not provide millisecond GPS measurements; accuracy and freshness depend on the provider and vehicle timestamps.

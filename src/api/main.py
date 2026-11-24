@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -113,31 +113,51 @@ def journeys(from_: str = Query(..., alias="from", min_length=1, max_length=200)
             "options": raw_options}
 
 @app.get("/crowding/route/{route}")
-def route_crowding(route: str, day_type: Literal["weekday", "weekend"] = "weekday",
-                   direction: int = Query(0, ge=0, le=1), half_hour: int = Query(17, ge=0, le=47)):
-    p = ready()
-    cpath = ROOT / cfg.get("paths", {}).get("processed", "data/processed") / "crowding.parquet"
+def route_crowding(route: str, day_type: Literal["weekday", "weekend"] | None = None,
+                   direction: int = Query(0, ge=0, le=1), half_hour: int | None = Query(None, ge=0, le=47),
+                   depart: datetime | None = None):
+    ready()
+    from src.transit import route_stop_table
+    frame = route_stop_table(route, direction, cfg)
+    rid = str(frame.iloc[0].route_id)
+    actual_direction = int(frame.iloc[0].direction_id)
+    depart = depart or datetime.now(IST)
+    depart = depart.replace(tzinfo=IST) if depart.tzinfo is None else depart.astimezone(IST)
+    day_type = day_type or ("weekend" if depart.weekday() >= 5 else "weekday")
+    half_hour = half_hour if half_hour is not None else depart.hour * 2 + depart.minute // 30
+    cpath = resolve(cfg, "processed") / "crowding.parquet"
     if not cpath.exists():
         raise HTTPException(503, "Crowding table not built yet")
     try:
         import pyarrow.parquet as pq
         import pandas as pd
-        table = pq.read_table(
-            cpath,
-            filters=[
-                ("route_short", "==", route.upper()),
-                ("day_type", "==", day_type),
-                ("direction_id", "==", direction),
-                ("half_hour", "==", half_hour),
-            ]
-        )
-        f = table.to_pandas().sort_values("seg")
+        f = pq.read_table(cpath, filters=[("route_id", "==", rid), ("day_type", "==", day_type),
+            ("direction_id", "==", actual_direction), ("half_hour", "==", half_hour)]).to_pandas()
     except Exception:
         logging.exception("Unable to read crowding data")
         raise HTTPException(503, "Crowding data is unavailable")
+    # Include missing stretches explicitly instead of presenting partial data as complete.
+    ordered = list(frame.itertuples())
+    base = pd.DataFrame([{"seg": int(a.seq), "from": a.stop_name, "to": b.stop_name,
+                         "from_stop_id": str(a.stop_id), "to_stop_id": str(b.stop_id)}
+                        for a, b in zip(ordered, ordered[1:])])
+    if base.empty:
+        raise HTTPException(404, "Route has no stretches")
     cols = ["seg", "load_est", "load_low", "load_high", "ratio", "level", "confidence", "n_trips"]
-    existing_cols = [c for c in cols if c in f.columns]
-    return {"route": route.upper(), "segments": records(f[existing_cols].round(2)) if not f.empty else []}
+    merged = base.merge(f[[c for c in cols if c in f]], on="seg", how="left")
+    known = merged.level.notna()
+    coverage = float(known.mean())
+    merged["level"] = merged.level.fillna("unknown")
+    merged["confidence"] = merged.confidence.fillna("low")
+    merged["n_trips"] = merged.n_trips.fillna(0).astype(int)
+    from src.routing.journeys import RANK
+    level = max(merged.level, key=lambda v: RANK[v]) if coverage == 1 else "unknown"
+    confidence = min(merged.confidence, key=lambda v: CONF_RANK[v]) if coverage == 1 else "low"
+    return {"route": str(frame.iloc[0].route_short), "route_id": rid, "direction": actual_direction,
+            "depart": depart.isoformat(), "day_type": day_type, "half_hour": half_hour,
+            "crowding": level, "confidence": confidence, "coverage": round(coverage, 3),
+            "basis": "Historical ticket-derived estimate; not live occupancy", "synthetic": cfg.get("synthetic", False),
+            "segments": records(merged.round(2))}
 
 @app.get("/crowding/top")
 def top_crowded(day_type: Literal["weekday", "weekend"] = "weekday",
@@ -183,9 +203,17 @@ app.mount("/assets", StaticFiles(directory=ROOT / "frontend"), name="assets")
 
 
 @app.get("/vehicles")
-def live_vehicles():
+def live_vehicles(request: Request, response: Response):
+    import time
     from src.live import get_vehicles
-    return get_vehicles()
+    data = get_vehicles()
+    # The freshness window is included so stale flags are periodically reevaluated.
+    etag = f'"{data["fetched_at"]}-{data["feed_timestamp"]}-{int(time.time() // 10)}"'
+    headers = {"ETag": etag, "Cache-Control": "no-store"}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=headers)
+    response.headers.update(headers)
+    return data
 
 
 @app.get("/transit/stops")

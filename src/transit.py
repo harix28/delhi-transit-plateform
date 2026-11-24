@@ -25,6 +25,10 @@ def _tables(raw_dir, processed_dir):
         routes = pd.read_csv(base / "routes.txt", dtype=str).fillna("")
     else:
         routes = rs[["route_id", "route_short"]].drop_duplicates().rename(columns={"route_short": "route_short_name"})
+    # Restrict raw route metadata to this processed dataset, filling missing IDs from it.
+    routes = routes[routes.route_id.isin(rs.route_id.unique())]
+    missing = rs[~rs.route_id.isin(routes.route_id)][["route_id", "route_short"]].drop_duplicates()
+    routes = pd.concat([routes, missing.rename(columns={"route_short": "route_short_name"})], ignore_index=True).fillna("")
     for col in ["route_long_name", "route_desc"]:
         if col not in routes:
             routes[col] = ""

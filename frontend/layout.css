@@ -87,3 +87,20 @@ body .app { position: relative; isolation: isolate; width: 100%; max-width: 520p
 .app .tracker-header, .app .tracker-status-card, .app .tracker-fleet-card { flex-shrink: 0; }
 .app .line-field-col, .app .loc-input-col { min-width: 0 !important; }
 .app .tracker-route-pill .route-number-large { max-width: 100%; white-space: normal !important; overflow-wrap: anywhere; }
+
+/* Route actions share the app button style; reset the legacy centered-pill transform. */
+.app #active-route-filter-bar { transform: none; border-radius: 14px; align-items: center; padding: 10px 12px; }
+.app #active-route-filter-bar .filter-dot { flex: 0 0 7px; }
+.app #filter-bar-text { display: block; color: #fff; line-height: 1.5; flex: 1 1 120px; }
+.app #btn-clear-map-filter { flex: 0 0 auto; margin: 0; min-height: 36px; padding: 8px 12px; border-radius: 10px; white-space: nowrap; }
+.app .journey-card-actions-single .btn-open-checkpoint-timeline { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 48px; margin: 0; padding: 12px 16px; border: 1px solid #1c6148; border-radius: 12px; background: #175b43; color: #fff; font: inherit; font-size: 14px; font-weight: 650; line-height: 1.5; text-align: center; white-space: normal; cursor: pointer; box-shadow: 0 2px 6px #173e2d14; }
+.app .journey-card-actions-single .btn-open-checkpoint-timeline:hover { background: #124b36; }
+.app .journey-card-actions-single .btn-open-checkpoint-timeline:focus-visible { outline: 3px solid #d6a947; outline-offset: 3px; }
+.app .journey-card-actions-single .btn-open-checkpoint-timeline:active { background: #0e3d2b; }
+
+/* Hide scrollbar chrome while retaining touch, wheel, and keyboard scrolling. */
+html, body, .app, .app * { scrollbar-width: none !important; -ms-overflow-style: none; }
+html::-webkit-scrollbar, body::-webkit-scrollbar, .app::-webkit-scrollbar, .app *::-webkit-scrollbar { display: none; width: 0; height: 0; }
+
+.crowding-reliability, #tracker-crowding-note { margin: 10px 0; padding: 10px 12px; border-radius: 10px; background: #edf3ef; color: #496453; font-size: 12px; line-height: 1.6; white-space: normal; }
+#tracker-crowding-note { margin: 10px 14px; flex-shrink: 0; }

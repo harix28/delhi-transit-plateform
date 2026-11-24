@@ -14,6 +14,7 @@ _lock = threading.Lock()
 _cache = None
 _fetched = 0
 _sim_coords = None
+REFRESH_SECONDS = max(5, int(os.getenv("TRANSIT_FEED_REFRESH_SECONDS", "10")))
 
 
 def clean_route_name(name: str) -> str:
@@ -129,17 +130,29 @@ def _unavailable(now):
             "feed_timestamp": None, "fetched_at": int(now), "vehicles": []}
 
 
+def _snapshot(now, refreshing=False):
+    cached = _cache
+    if cached is None:
+        return _unavailable(now)
+    vehicles = []
+    for vehicle in cached["vehicles"]:
+        timestamp = vehicle.get("timestamp")
+        age = now - timestamp if timestamp else None
+        vehicles.append(dict(vehicle, stale=age is None or age > 300 or age < -60))
+    return dict(cached, vehicles=vehicles, refreshing=refreshing)
+
+
 def get_vehicles():
     global _cache, _fetched
     now = time.time()
-    if _cache is not None and now - _fetched < 30:
-        return _cache
+    if _cache is not None and now - _fetched < REFRESH_SECONDS:
+        return _snapshot(now)
     # One upstream fetch at a time; other callers never queue behind a timeout.
     if not _lock.acquire(blocking=False):
-        return _unavailable(now)
+        return _snapshot(now, refreshing=True)
     try:
-        if _cache is not None and now - _fetched < 30:
-            return _cache
+        if _cache is not None and now - _fetched < REFRESH_SECONDS:
+            return _snapshot(now)
         result = _unavailable(now)
         key = os.getenv("TRANSPORTSTACK_API_KEY", "").strip()
         if key:

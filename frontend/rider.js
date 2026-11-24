@@ -28,14 +28,22 @@ let currentTrackedVehicle = null;
 let currentTrackedRouteId = null;
 let currentTrackedRouteName = null;
 let currentTrackedSegments = null;
+let currentCrowdingContext = null;
+let currentCrowdingKey = null;
+let currentCrowdingIsJourney = false;
 let showRouteOnMapGlobal = null;
 const routeStopsCache = new Map();
 
-async function openBusTracker(vehicle, routeId, routeName, segments, isBackgroundUpdate = false) {
+async function openBusTracker(vehicle, routeId, routeName, segments, isBackgroundUpdate = false, crowdingContext = null) {
   currentTrackedVehicle = vehicle;
   currentTrackedRouteId = routeId;
   currentTrackedRouteName = routeName;
-  if (segments !== undefined || !isBackgroundUpdate) currentTrackedSegments = segments || null;
+  if (!isBackgroundUpdate) {
+    currentTrackedSegments = segments || null;
+    currentCrowdingContext = crowdingContext;
+    currentCrowdingIsJourney = !!(segments && segments.length);
+    currentCrowdingKey = null;
+  }
 
   const sheet = $('bus-tracker-sheet');
   if (!sheet) return;
@@ -62,15 +70,22 @@ async function openBusTracker(vehicle, routeId, routeName, segments, isBackgroun
     }
   }
 
-  // Automatically fetch corridor crowding if not passed
-  if (!currentTrackedSegments || !currentTrackedSegments.length) {
+  // Historical estimates follow the exact route and selected departure in India time.
+  const crowdDepart = currentCrowdingContext?.depart || new Date().toISOString();
+  const indiaSlot = new Intl.DateTimeFormat('sv-SE', {timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(crowdDepart));
+  const crowdKey = queryRoute + ':' + indiaSlot.slice(0,14) + (Number(indiaSlot.slice(-2)) < 30 ? '00' : '30');
+  if (!currentCrowdingIsJourney && currentCrowdingKey !== crowdKey) {
+    currentCrowdingKey = crowdKey;
+    currentTrackedSegments = null;
     try {
-      const cRes = await get('/crowding/route/' + encodeURIComponent(cleanR));
-      if (cRes && cRes.segments && cRes.segments.length) {
-        currentTrackedSegments = cRes.segments;
-      }
-    } catch (_) { }
+      const cRes = await get('/crowding/route/' + encodeURIComponent(queryRoute) + '?' + new URLSearchParams({depart:crowdDepart}));
+      currentTrackedSegments = cRes.segments || [];
+      currentCrowdingContext = {coverage:cRes.coverage, confidence:cRes.confidence};
+    } catch (_) { currentCrowdingContext = {coverage:0,confidence:'low'}; }
   }
+  let crowdNote = $('tracker-crowding-note');
+  if (!crowdNote) { crowdNote=element('p',''); crowdNote.id='tracker-crowding-note'; sheet.querySelector('.tracker-header').after(crowdNote); }
+  crowdNote.textContent = `Historical ticket estimates · ${Math.round((currentCrowdingContext?.coverage || 0)*100)}% stretch coverage · ${currentCrowdingContext?.confidence || 'low'} sample confidence. Not live occupancy.`;
 
   safeSetText('tracker-route-num', routeCode);
   const acBadge = $('tracker-ac-badge');
@@ -80,7 +95,8 @@ async function openBusTracker(vehicle, routeId, routeName, segments, isBackgroun
   if (crowdBadge) {
     let worst = 'unknown';
     if (Array.isArray(currentTrackedSegments) && currentTrackedSegments.length) {
-      if (currentTrackedSegments.some(s => s.level === 'crowded')) worst = 'crowded';
+      if (currentTrackedSegments.some(s => s.level === 'unknown')) worst = 'unknown';
+      else if (currentTrackedSegments.some(s => s.level === 'crowded')) worst = 'crowded';
       else if (currentTrackedSegments.some(s => s.level === 'standing')) worst = 'standing';
       else if (currentTrackedSegments.every(s => s.level === 'seats')) worst = 'seats';
     }
@@ -488,9 +504,11 @@ async function openBusTracker(vehicle, routeId, routeName, segments, isBackgroun
 // Auto-Streaming Live Bus Tracker (Smooth Background Polling)
 // -------------------------------------------------------------
 let trackerAutoTimer = null;
+let trackerFeedRevision = -1;
 
 function startAutoTrackerPolling() {
   stopAutoTrackerPolling();
+  trackerFeedRevision = feedRevision;
   trackerAutoTimer = setInterval(async () => {
     const sheet = $('bus-tracker-sheet');
     if (!sheet || sheet.hidden) {
@@ -498,7 +516,10 @@ function startAutoTrackerPolling() {
       return;
     }
     try {
+      if (document.hidden) return;
       await refresh();
+      if (trackerFeedRevision === feedRevision) return;
+      trackerFeedRevision = feedRevision;
       if (currentTrackedVehicle && currentTrackedVehicle.id) {
         const found = vehicles.find(v => v.id === currentTrackedVehicle.id);
         currentTrackedVehicle = found && !found.stale ? found : null;
@@ -509,7 +530,7 @@ function startAutoTrackerPolling() {
       }
       await openBusTracker(currentTrackedVehicle, currentTrackedRouteId, currentTrackedRouteName, currentTrackedSegments, true);
     } catch (_) { }
-  }, 30000);
+  }, 2000);
 }
 
 function stopAutoTrackerPolling() {
@@ -917,6 +938,7 @@ if (splashEl) {
 }
 
 const activeBusMarkers = new Map();
+const vehicleAnimator = TransitMotion.createAnimator();
 
 function paint() {
   const bounds = map.getBounds();
@@ -963,8 +985,12 @@ function paint() {
 
     if (activeBusMarkers.has(v.id)) {
       const marker = activeBusMarkers.get(v.id);
-      marker.setLatLng([v.lat, v.lon]);
-      marker.setIcon(L.divIcon({ className: 'simple-bus-marker-wrap', html: html, iconSize: size, iconAnchor: anchor }));
+      vehicleAnimator.update(marker, v.lat, v.lon, v.timestamp);
+      marker.transitVehicle = v;
+      if (marker.transitIcon !== html) {
+        marker.setIcon(L.divIcon({ className: 'simple-bus-marker-wrap', html: html, iconSize: size, iconAnchor: anchor }));
+        marker.transitIcon = html;
+      }
       const p = marker.getPopup();
       if (p) p.setContent(popupHtml);
     } else {
@@ -981,15 +1007,20 @@ function paint() {
       p.onclick = (e) => {
         if (e.target.closest('.bus-track-action-btn')) {
           e.stopPropagation();
-          openBusTracker(v, v.route_id, v.display_route || v.route_id);
+          const current = marker.transitVehicle;
+          openBusTracker(current, current.route_id, current.display_route || current.route_id);
         }
       };
 
       marker.bindPopup(p);
       marker.on('click', () => {
-        openBusTracker(v, v.route_id, v.display_route || v.route_id);
+        const current = marker.transitVehicle;
+        openBusTracker(current, current.route_id, current.display_route || current.route_id);
       });
 
+      marker.transitVehicle = v;
+      marker.transitIcon = html;
+      vehicleAnimator.update(marker, v.lat, v.lon, v.timestamp);
       marker.addTo(buses);
       activeBusMarkers.set(v.id, marker);
     }
@@ -997,6 +1028,7 @@ function paint() {
 
   for (const [id, marker] of activeBusMarkers.entries()) {
     if (!visibleIds.has(id)) {
+      vehicleAnimator.remove(marker);
       buses.removeLayer(marker);
       activeBusMarkers.delete(id);
     }
@@ -1004,11 +1036,14 @@ function paint() {
 }
 
 let feedRequest = null;
+let feedEtag = null;
+let feedRevision = 0;
 let feedSynthetic = false;
 function updateFeedStatus(data) {
   feedSynthetic = !!data.synthetic;
   const fresh = (data.vehicles || []).filter(v => !v.stale).length;
-  const text = feedSynthetic ? 'Demo fleet · simulated' : data.available ? `${fresh} buses with fresh GPS` : 'Live GPS unavailable';
+  const feedTime = data.feed_timestamp ? new Intl.DateTimeFormat('en-IN', {timeZone: 'Asia/Kolkata',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).format(new Date(data.feed_timestamp * 1000)) : '';
+  const text = feedSynthetic ? 'Demo fleet · simulated' : data.available ? `${fresh} buses with fresh GPS${feedTime ? ' · ' + feedTime + ' IST' : ''}` : 'Live GPS unavailable';
   safeSetText('full-map-fleet-count', text);
   safeSetText('dataset-pill', feedSynthetic ? 'Demo' : data.available ? 'Live GPS' : 'GPS unavailable');
   safeSetText('data-notice', feedSynthetic ? 'Simulated positions for demonstration' : data.source);
@@ -1024,11 +1059,16 @@ async function refresh() {
   if (feedRequest) return feedRequest;
   feedRequest = (async () => {
     try {
-      const d = await get('/vehicles');
+      const response = await fetch('/vehicles', {cache: 'no-store', headers: feedEtag ? {'If-None-Match': feedEtag} : {}});
+      if (response.status === 304) return;
+      if (!response.ok) throw Error('Live feed unavailable');
+      feedEtag = response.headers.get('ETag');
+      const d = await response.json();
+      feedRevision++;
       vehicles = d.vehicles || [];
       updateFeedStatus(d);
     } catch (error) {
-      vehicles = []; updateFeedStatus({available: false, source: 'Live GPS unavailable'});
+      feedEtag = null; feedRevision++; vehicles = []; updateFeedStatus({available: false, source: 'Live GPS unavailable'});
     }
     paint();
   })();
@@ -1343,7 +1383,7 @@ async function nearby(lat, lon) {
 $('locate-me').onclick = () => { if (!navigator.geolocation) return; $('nearby-location').textContent = 'Requesting your location…'; navigator.geolocation.getCurrentPosition(p => { map.setView([p.coords.latitude, p.coords.longitude], 15); nearby(p.coords.latitude, p.coords.longitude); }, () => { $('nearby-location').textContent = 'Location unavailable. Tap the map to choose a location.'; }, { timeout: 12000 }); };
 $('demo-location').textContent = 'Search map area'; $('demo-location').onclick = () => { filter = null; paths.clearLayers(); paint(); const c = map.getCenter(); nearby(c.lat, c.lng); }; map.on('click', e => nearby(e.latlng.lat, e.latlng.lng));
 $('zoom-in').onclick = () => map.zoomIn(); $('zoom-out').onclick = () => map.zoomOut(); $('fit').onclick = () => { filter = null; paths.clearLayers(); map.setView([28.6315, 77.2167], 13); paint(); };
-refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 30000); nearby(28.6315, 77.2167);
+refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 2000); nearby(28.6315, 77.2167);
 const readSaved = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } };
 const saveLocal = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch { return false; } };
 let recent = readSaved('transit.recents', []); if (!Array.isArray(recent)) recent = [];
@@ -1881,7 +1921,7 @@ if (hotspotsBtn) {
     if (!hotspotsActive) {
       hotspots.clearLayers();
       safeSetText('map-headline', 'Delhi bus network');
-      safeSetText('map-description', 'Live buses moving across Delhi · updates every 30s');
+      safeSetText('map-description', 'Live buses moving across Delhi · checks every 2s · provider updates may be slower');
       return;
     }
     safeSetText('map-headline', '🔥 Rush-Hour Crowding Hotspots');
@@ -2122,6 +2162,7 @@ planButton.onclick = async () => {
         ${o.transfers && o.transfer_stop && (!o.legs || o.legs.length <= 1) ? `<div class="smart-transfer-info">🔁 Change bus at <strong>${o.transfer_stop}</strong> · ~${o.transfer_min} min buffer</div>` : ''}
         ${legsHtml}
         <p class="journey-time-basis">${o.time_basis || 'Timing estimate'}${d.synthetic ? ' · Synthetic demo' : ''}</p>
+        <p class="crowding-reliability">Historical crowding · ${Math.round((o.crowding_coverage || 0) * 100)}% stretch coverage · ${o.confidence || 'low'} sample confidence. Not a seat guarantee.</p>
         ${fleetPreviewHtml}
         <div class="journey-fare-row">
           <div class="fare-pills-wrap">
@@ -2274,7 +2315,7 @@ planButton.onclick = async () => {
       const openCheckpointView = (e) => {
         if (e) e.stopPropagation();
         const firstLeg = o.legs ? o.legs[0] : o;
-        openBusTracker(nearestBus, firstLeg.route_id || firstLeg.route, firstLeg.route, firstLeg.segments);
+        openBusTracker(nearestBus, firstLeg.route_id || firstLeg.route, firstLeg.route, firstLeg.segments, false, {depart:firstLeg.scheduled_departure || d.depart, coverage:firstLeg.crowding_coverage, confidence:firstLeg.confidence});
       };
 
       const checkpointBtn = card.querySelector('.btn-open-checkpoint-timeline');
@@ -2288,7 +2329,7 @@ planButton.onclick = async () => {
         legEl.style.cursor = 'pointer';
         legEl.onclick = (e) => {
           e.stopPropagation();
-          openBusTracker(null, legData.route_id || legData.route, legData.route, legData.segments);
+          openBusTracker(null, legData.route_id || legData.route, legData.route, legData.segments, false, {depart:legData.scheduled_departure || d.depart, coverage:legData.crowding_coverage, confidence:legData.confidence});
         };
       });
 

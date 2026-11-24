@@ -1,0 +1,30 @@
+{
+  "scope": "Recomputed from saved holdout artifacts, not rerun from raw tickets; no independent occupancy ground truth",
+  "evaluated_bins": 78588,
+  "test_bins": 849259,
+  "evaluated_test_bin_fraction": 0.09253714120191837,
+  "usable_ticket_records": 1317662,
+  "matched_ticket_records": 891048,
+  "match_rate_among_usable": 0.6762341177024154,
+  "mae_ticket_derived_scaled_load": 7.528671679465524,
+  "rmse_ticket_derived_scaled_load": 10.535766238431206,
+  "label_agreement": 0.7281009823382705,
+  "majority_label_baseline": "seats",
+  "majority_label_agreement": 0.5975975975975976,
+  "configured_uplift": 20.0,
+  "capacity_assumptions": {
+    "seated": 35,
+    "total": 65,
+    "high_n": 15,
+    "med_n": 4
+  },
+  "scaling_matches_config": true,
+  "minimum_sample_rule_satisfied": true,
+  "warnings": [
+    "Capacity and uplift are assumptions, not measured calibration.",
+    "Metrics cover overlapping bins with at least five inferred trips in both splits.",
+    "Excluded tickets and bins can create selection bias.",
+    "Do not interpret label agreement as real occupancy accuracy."
+  ],
+  "holdout_sha256": "356fb1cef0c5608c9e16ba6feedc297f47cb6375e1476c3dd940485382796b2b"
+}

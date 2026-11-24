@@ -1,0 +1,7 @@
+day_type,window,observed_segment_bins,conditional_mean_scaled_ticket_load
+weekday,morning_08_10,139875,27.79712994578268
+weekday,midday_12_15,126392,24.9602291494023
+weekday,evening_17_20,186386,26.959164577204053
+weekend,morning_08_10,96975,26.850720038934327
+weekend,midday_12_15,81735,26.13546460546329
+weekend,evening_17_20,121274,26.98961132759723
