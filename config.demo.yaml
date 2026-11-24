@@ -1,8 +1,8 @@
 crowding:
-  high_n: 20
-  med_n: 5
+  high_n: 15
+  med_n: 4
   seated: 35
-  total: 70
+  total: 65
 dataset: Synthetic Delhi demo
 journey:
   dwell_min: 0.4
@@ -14,7 +14,7 @@ journey:
 load:
   ci_z: 1.96
   minutes_per_stop: 2.5
-  uplift: 1.0
+  uplift: 20.0
 paths:
   outputs: data/demo/outputs
   processed: data/demo/processed

@@ -3,10 +3,10 @@ services:
     name: delhi-transit-platform
     env: python
     plan: free
-    buildCommand: pip install -r requirements.txt && python scripts/create_demo.py
+    buildCommand: pip install -r requirements.txt
     startCommand: uvicorn src.api.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: TRANSIT_CONFIG
-        value: config.demo.yaml
+        value: config.yaml
       - key: PYTHON_VERSION
         value: 3.11.9

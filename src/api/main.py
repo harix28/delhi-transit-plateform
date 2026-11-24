@@ -27,8 +27,13 @@ IST = ZoneInfo("Asia/Kolkata")
 async def lifespan(app):
     global planner, startup_error, cfg
     try:
+        primary_cfg_path = ROOT / "config.yaml"
+        if primary_cfg_path.exists() and (ROOT / "data/processed/stops.parquet").exists():
+            cfg.clear()
+            cfg.update(load_config(primary_cfg_path))
         planner = JourneyPlanner(resolve(cfg, "processed"), cfg)
-    except (FileNotFoundError, ValueError, KeyError, OSError) as exc:
+        logging.info("Delhi Transit Intelligence planner active with %d stops.", len(planner.stops))
+    except Exception as exc:
         startup_error = str(exc)
         logging.warning("Planner initial load failed: %s. Initiating automatic fallback...", exc)
         try:
@@ -43,7 +48,7 @@ async def lifespan(app):
                 cfg.update(demo_cfg)
                 planner = JourneyPlanner(resolve(cfg, "processed"), cfg)
                 startup_error = None
-                logging.info("Self-healing successful! Demo transit planner active.")
+                logging.info("Demo transit planner active.")
         except Exception as fallback_exc:
             logging.error("Automatic fallback failed: %s", fallback_exc)
     yield
@@ -58,11 +63,16 @@ app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET"],
 def init_planner():
     global planner, startup_error, cfg
     try:
-        proc = resolve(cfg, "processed")
-        if proc.exists() and (proc / "stops.parquet").exists():
-            planner = JourneyPlanner(proc, cfg)
-            startup_error = None
-            return planner
+        primary_cfg_path = ROOT / "config.yaml"
+        if primary_cfg_path.exists() and (ROOT / "data/processed/stops.parquet").exists():
+            cfg.clear()
+            cfg.update(load_config(primary_cfg_path))
+            proc = resolve(cfg, "processed")
+            if proc.exists() and (proc / "stops.parquet").exists():
+                planner = JourneyPlanner(proc, cfg)
+                startup_error = None
+                logging.info("Primary Delhi transit dataset active (%d stops).", len(planner.stops))
+                return planner
     except Exception as exc:
         logging.warning("Primary planner init failed: %s", exc)
 

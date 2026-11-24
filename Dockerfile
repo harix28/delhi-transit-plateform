@@ -12,7 +12,7 @@ COPY . .
 # Generate demo data if processed data is not present
 RUN python scripts/create_demo.py
 
-ENV TRANSIT_CONFIG=config.demo.yaml
+ENV TRANSIT_CONFIG=config.yaml
 ENV PORT=8000
 EXPOSE 8000
 

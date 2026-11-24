@@ -9,3 +9,13 @@ LG,Lodhi Garden,28.5933,77.2197
 AI,AIIMS,28.5686,77.2077
 KB,Karol Bagh,28.6527,77.1908
 RK,Ramakrishna Ashram,28.639,77.2086
+KG,Kashmere Gate ISBT,28.6675,77.2285
+AV,Anand Vihar ISBT,28.6469,77.316
+DK,Dhaula Kuan,28.5925,77.161
+NP,Nehru Place Terminal,28.5482,77.2514
+UN,Uttam Nagar Terminal,28.6219,77.062
+DW,Dwarka Sector 10,28.5815,77.057
+RN,Rohini Sector 16,28.732,77.123
+BD,Badarpur Border,28.498,77.301
+SK,Saket Crossing,28.5204,77.213
+AZ,Azadpur Terminal,28.706,77.176
