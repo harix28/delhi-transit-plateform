@@ -466,7 +466,7 @@ function startAutoTrackerPolling() {
       }
       await openBusTracker(currentTrackedVehicle, currentTrackedRouteId, currentTrackedRouteName, currentTrackedSegments, true);
     } catch (_) { }
-  }, 12000);
+  }, 1500);
 }
 
 function stopAutoTrackerPolling() {
@@ -859,6 +859,91 @@ if (clearFilterBtn) {
   };
 }
 
+function formatRoute(r) {
+  if (!r) return '';
+  return String(r)
+    .replace(/(?:\b|_)UP\b/gi, '')
+    .replace(/(?:\b|_)DOWN\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+async function openStationExplorer(stopId, stopName, distLabel) {
+  const sheet = $('station-explorer-sheet');
+  if (!sheet) return;
+  safeSetText('station-explorer-title', stopName);
+  safeSetText('station-explorer-meta', distLabel ? `~${distLabel} away` : 'Bus Stand');
+  const container = $('station-departures-container');
+  if (container) {
+    container.innerHTML = '<div class="station-loading-spinner">Loading station buses & routes…</div>';
+  }
+  sheet.hidden = false;
+
+  try {
+    const res = await get('/transit/stops/' + encodeURIComponent(stopId) + '/departures');
+    if (!container) return;
+    container.replaceChildren();
+
+    if (!res.departures || !res.departures.length) {
+      container.innerHTML = '<div class="station-empty-msg">No scheduled departures in the next two hours. Check back soon.</div>';
+      return;
+    }
+
+    res.departures.forEach(dep => {
+      const cleanR = formatRoute(dep.route);
+      const row = element('div', '');
+      row.className = 'station-bus-row';
+      const etaText = dep.minutes <= 1 ? 'Due now' : `In ${Math.ceil(dep.minutes)} min`;
+      row.innerHTML = `
+        <div class="station-bus-info">
+          <div class="station-bus-badge">${cleanR}</div>
+          <div class="station-bus-timing">
+            <strong>${etaText}</strong>
+            <small>${dep.departure ? (dep.departure.slice(11, 16) || dep.departure) : 'Scheduled'}</small>
+          </div>
+        </div>
+        <button type="button" class="btn-draw-station-route">🗺️ View Route</button>
+      `;
+
+      const viewRouteBtn = row.querySelector('.btn-draw-station-route');
+      if (viewRouteBtn) {
+        viewRouteBtn.onclick = async (e) => {
+          e.stopPropagation();
+          sheet.hidden = true;
+          safeSetText('map-headline', 'Route ' + cleanR);
+          safeSetText('map-description', `Route ${cleanR} from ${stopName}`);
+          filter = dep.route_id || cleanR;
+          paint();
+          paths.clearLayers();
+          try {
+            const shape = await get('/transit/routes/' + encodeURIComponent(dep.route_id || cleanR));
+            if (shape.paths && shape.paths.length) {
+              shape.paths.forEach(p => L.polyline(p, { color: '#059669', weight: 5, opacity: 0.9 }).addTo(paths));
+              const bounds = L.latLngBounds(shape.paths.flat());
+              map.fitBounds(bounds, { padding: [50, 50] });
+            }
+          } catch (_) { }
+          if (typeof showScreen === 'function') showScreen('map');
+        };
+      }
+
+      container.append(row);
+    });
+  } catch (err) {
+    if (container) {
+      container.innerHTML = `<div class="station-empty-msg">Could not load timetable: ${err.message}</div>`;
+    }
+  }
+}
+
+const closeStationExplorerBtn = $('btn-close-station-explorer');
+if (closeStationExplorerBtn) {
+  closeStationExplorerBtn.onclick = () => {
+    const sheet = $('station-explorer-sheet');
+    if (sheet) sheet.hidden = true;
+  };
+}
+
 async function nearby(lat, lon) {
   const id = ++sequence;
   safeSetText('nearby-location', 'Finding nearby stops…');
@@ -874,7 +959,8 @@ async function nearby(lat, lon) {
       host.append(element('p', 'No stops nearby. Try another area on the map.'));
       return;
     }
-    d.stops.forEach((s, index) => {
+    d.stops.forEach((s) => {
+      const distLabel = s.distance_m >= 1000 ? (s.distance_m / 1000).toFixed(1) + ' km' : Math.round(s.distance_m) + ' m';
       L.circleMarker([s.lat, s.lon], {
         radius: 6,
         color: '#164c36',
@@ -883,84 +969,31 @@ async function nearby(lat, lon) {
         weight: 2.5
       }).bindPopup(element('strong', s.name)).addTo(stands);
 
-      const card = element('article', ''); card.className = 'nearby-stop';
-      const header = element('div', ''); header.className = 'stop-heading';
-      const title = element('div', ''); title.append(element('small', index === 0 ? 'NEAREST STOP' : 'BUS STAND'), element('h3', s.name));
-      const distance = element('span', s.distance_m >= 1000 ? (s.distance_m / 1000).toFixed(1) + ' km' : Math.round(s.distance_m) + ' m'); distance.className = 'stop-distance';
-      header.append(title, distance); card.append(header);
-      const count = element('p', s.routes.length + ' routes serve this stop'); count.className = 'stop-caption'; card.append(count);
-      const list = element('div', ''); list.className = 'stop-routes';
-      const status = element('p', ''); status.className = 'stop-status'; status.setAttribute('role', 'status');
-
-      s.routes.forEach((r, i) => {
-        const code = r.route_short_name || r.route_id;
-        const activeBus = vehicles.find(v => !v.stale && (v.route_id === r.route_id || v.route_id === code));
-
-        const row = element('div', '');
-        row.className = 'stop-route-wrapper';
-        row.hidden = i >= 4;
-
-        const button = element('button', ''); button.type = 'button'; button.className = 'stop-route'; button.setAttribute('aria-pressed', 'false');
-        const badge = element('span', code); badge.className = 'route-number';
-        const detail = element('span', ''); detail.className = 'route-description';
-        detail.append(
-          element('strong', r.route_long_name && r.route_long_name !== code ? r.route_long_name : 'Bus route ' + code),
-          element('small', activeBus ? '● Bus running nearby' : 'View route on map')
-        );
-        const arrow = element('span', '↗'); arrow.setAttribute('aria-hidden', 'true'); button.append(badge, detail, arrow);
-
-        button.onclick = async () => {
-          filter = r.route_id; paint(); paths.clearLayers();
-          host.querySelectorAll('.stop-route').forEach(row => row.setAttribute('aria-pressed', String(row === button)));
-          safeSetText('map-headline', 'Route ' + code); status.textContent = 'Loading route…';
-          try {
-            const shape = await get('/transit/routes/' + encodeURIComponent(r.route_id));
-            if (filter !== r.route_id) return;
-            shape.paths.forEach(p => L.polyline(p, { color: '#15735a', weight: 4 }).addTo(paths));
-            status.textContent = shape.paths.length ? 'Route highlighted on the map.' : 'Route corridor loaded.';
-          } catch (e) { if (filter === r.route_id) status.textContent = 'Route shape unavailable.'; }
-        };
-
-        const trackBtn = element('button', 'Track Bus ›');
-        trackBtn.type = 'button';
-        trackBtn.className = 'btn-track-route-bus';
-        trackBtn.title = 'Track bus station by station';
-        trackBtn.onclick = (e) => {
-          e.stopPropagation();
-          openBusTracker(activeBus, r.route_id, code);
-        };
-
-        row.append(button, trackBtn);
-        list.append(row);
-      });
-      card.append(list);
-
-      if (s.routes.length > 4) {
-        const more = element('button', 'Show all ' + s.routes.length + ' routes'); more.type = 'button'; more.className = 'stop-expand'; more.setAttribute('aria-expanded', 'false');
-        more.onclick = () => { const expanded = more.getAttribute('aria-expanded') !== 'true'; more.setAttribute('aria-expanded', String(expanded));[...list.children].forEach((row, i) => row.hidden = !expanded && i >= 4); more.textContent = expanded ? 'Show fewer routes' : 'Show all ' + s.routes.length + ' routes'; }; card.append(more);
-      }
-      card.append(status);
-
-      const times = element('button', 'Scheduled departures'); times.type = 'button'; times.className = 'stop-timetable'; times.setAttribute('aria-expanded', 'false');
-      const departureRows = element('div', ''); departureRows.className = 'stop-departures'; departureRows.hidden = true; departureRows.setAttribute('aria-live', 'polite');
-      times.onclick = async () => {
-        if (!departureRows.hidden) { departureRows.hidden = true; times.setAttribute('aria-expanded', 'false'); return; }
-        departureRows.hidden = false; times.setAttribute('aria-expanded', 'true'); times.disabled = true; departureRows.textContent = 'Checking timetable…';
-        try {
-          const result = await get('/transit/stops/' + encodeURIComponent(s.id) + '/departures');
-          departureRows.replaceChildren(element('small', 'Timetable departures'));
-          if (!result.departures.length) departureRows.append(element('p', 'No scheduled departures in the next two hours.'));
-          result.departures.forEach(t => { const row = element('div', ''); row.className = 'departure-row'; row.append(element('strong', t.route), element('span', 'In ' + Math.ceil(t.minutes) + ' min')); departureRows.append(row); });
-        } catch (e) { departureRows.textContent = e.message; } finally { times.disabled = false; }
+      const card = element('article', '');
+      card.className = 'clean-nearby-stop-card';
+      card.innerHTML = `
+        <div class="stop-card-main">
+          <div class="stop-icon-col">🚏</div>
+          <div class="stop-info-col">
+            <h3 class="stop-clean-name">${s.name}</h3>
+            <span class="stop-clean-dist">📍 ~${distLabel} away</span>
+          </div>
+          <div class="stop-chevron-col">
+            <span class="view-buses-pill">Buses & Routes ›</span>
+          </div>
+        </div>
+      `;
+      card.onclick = () => {
+        openStationExplorer(s.id, s.name, distLabel);
       };
-      card.append(times, departureRows); host.append(card);
+      host.append(card);
     });
   } catch (e) { if (id === sequence) safeSetText('nearby-location', e.message); }
 }
 $('locate-me').onclick = () => { if (!navigator.geolocation) return; $('nearby-location').textContent = 'Requesting your location…'; navigator.geolocation.getCurrentPosition(p => { map.setView([p.coords.latitude, p.coords.longitude], 15); nearby(p.coords.latitude, p.coords.longitude); }, () => { $('nearby-location').textContent = 'Location unavailable. Tap the map to choose a location.'; }, { timeout: 12000 }); };
 $('demo-location').textContent = 'Search map area'; $('demo-location').onclick = () => { filter = null; paths.clearLayers(); paint(); const c = map.getCenter(); nearby(c.lat, c.lng); }; map.on('click', e => nearby(e.latlng.lat, e.latlng.lng));
 $('zoom-in').onclick = () => map.zoomIn(); $('zoom-out').onclick = () => map.zoomOut(); $('fit').onclick = () => { filter = null; paths.clearLayers(); map.setView([28.6315, 77.2167], 13); paint(); };
-refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 30000); nearby(28.6315, 77.2167);
+refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 1500); nearby(28.6315, 77.2167);
 const readSaved = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } };
 const saveLocal = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch { return false; } };
 let recent = readSaved('transit.recents', []); if (!Array.isArray(recent)) recent = [];
@@ -981,9 +1014,17 @@ function selectDestination(s) {
   $('pickup-label').textContent = pickupText;
 }
 function renderRecent() {
-  const host = $('recent-destinations'); host.replaceChildren();
-  $('clear-recents').hidden = !recent.length;
-  if (!recent.length) host.append(element('p', 'Your searched destinations will appear here.'));
+  const wrapper = $('recent-destinations-wrapper');
+  if (wrapper) wrapper.hidden = !recent.length;
+  const host = $('recent-destinations');
+  if (!host) return;
+  host.replaceChildren();
+  const clearBtn = $('clear-recents');
+  if (clearBtn) clearBtn.hidden = !recent.length;
+  if (!recent.length) {
+    if (wrapper) wrapper.hidden = true;
+    return;
+  }
   recent.forEach(s => {
     if (!s || !s.stop_name) return;
     const b = element('button', '◷  ' + s.stop_name);
@@ -992,28 +1033,165 @@ function renderRecent() {
     host.append(b);
   });
 }
-let searchTimer, searchVersion = 0;
-$('destination-search').oninput = () => {
-  clearTimeout(searchTimer);
-  const q = $('destination-search').value.trim(), version = ++searchVersion;
-  $('destination-results').replaceChildren();
-  if (q.length < 2) return;
-  searchTimer = setTimeout(async () => {
-    try {
-      const d = await get('/transit/search?q=' + encodeURIComponent(q));
-      if (version !== searchVersion) return;
-      const host = $('destination-results'); host.replaceChildren();
-      if (!d.stops.length) host.append(element('p', 'No matching bus stops found.'));
-      d.stops.forEach(s => {
-        const b = element('button', s.stop_name);
-        b.className = 'destination-option';
-        b.onclick = () => { searchVersion++; selectDestination(s); };
-        host.append(b);
-      });
-    } catch { $('destination-results').textContent = 'Search unavailable. Please try again.'; }
-  }, 250);
-};
 $('clear-recents').onclick = () => { recent = []; saveLocal('transit.recents', recent); renderRecent(); };
+
+// Location Search Overlay Controller (From & To)
+let currentLocPickerMode = 'pickup';
+function openLocationPicker(mode) {
+  currentLocPickerMode = mode;
+  const overlay = $('location-search-screen');
+  if (!overlay) return;
+  overlay.hidden = false;
+  safeSetText('loc-search-header-title', mode === 'pickup' ? 'Select Pickup Station' : 'Select Destination Station');
+  const input = $('loc-search-input');
+  if (input) {
+    input.value = '';
+    input.placeholder = mode === 'pickup' ? 'Search pickup stop (e.g. Anand Vihar, AIIMS…)' : 'Search destination stop (e.g. Kashmere Gate…)';
+    input.focus();
+  }
+  const clearBtn = $('loc-search-clear-btn');
+  if (clearBtn) clearBtn.hidden = true;
+  const list = $('loc-search-results-list');
+  if (list) list.replaceChildren();
+}
+
+function closeLocationPicker() {
+  const overlay = $('location-search-screen');
+  if (overlay) overlay.hidden = true;
+}
+
+const locBackBtn = $('loc-search-back-btn');
+if (locBackBtn) locBackBtn.onclick = closeLocationPicker;
+
+const locClearBtn = $('loc-search-clear-btn');
+if (locClearBtn) {
+  locClearBtn.onclick = () => {
+    const input = $('loc-search-input');
+    if (input) input.value = '';
+    locClearBtn.hidden = true;
+    const list = $('loc-search-results-list');
+    if (list) list.replaceChildren();
+  };
+}
+
+let locPickerTimer;
+const locInput = $('loc-search-input');
+if (locInput) {
+  locInput.oninput = () => {
+    clearTimeout(locPickerTimer);
+    const q = locInput.value.trim();
+    if (locClearBtn) locClearBtn.hidden = !q;
+    const list = $('loc-search-results-list');
+    if (!list) return;
+    if (q.length < 2) {
+      list.replaceChildren();
+      return;
+    }
+    locPickerTimer = setTimeout(async () => {
+      try {
+        const d = await get('/transit/search?q=' + encodeURIComponent(q));
+        list.replaceChildren();
+        if (!d.stops || !d.stops.length) {
+          list.innerHTML = '<div class="loc-search-empty">No matching bus stops found. Try another spelling.</div>';
+          return;
+        }
+        d.stops.forEach(s => {
+          const item = element('button', '');
+          item.type = 'button';
+          item.className = 'loc-result-item';
+          item.innerHTML = `
+            <span class="loc-result-icon">🚏</span>
+            <div class="loc-result-text">
+              <strong>${s.stop_name}</strong>
+              <small>Delhi Bus Stand</small>
+            </div>
+            <span class="loc-result-arrow">›</span>
+          `;
+          item.onclick = () => {
+            if (currentLocPickerMode === 'pickup') {
+              $('pickup-search').value = s.stop_name;
+              window.pickupCoordinates = s.stop_lat + ',' + s.stop_lon;
+              window.pickupName = s.stop_name;
+              pickupText = s.stop_name;
+              $('pickup-label').textContent = 'Pickup selected';
+              if (pickupMarker) map.removeLayer(pickupMarker);
+              pickupMarker = L.circleMarker([s.stop_lat, s.stop_lon], { radius: 9, color: '#fff', fillColor: '#10b981', fillOpacity: 1, weight: 3 }).addTo(map).bindPopup(element('strong', 'Pickup: ' + s.stop_name));
+            } else {
+              selectDestination(s);
+            }
+            closeLocationPicker();
+          };
+          list.append(item);
+        });
+      } catch (_) {
+        list.innerHTML = '<div class="loc-search-empty">Could not load search results. Please try again.</div>';
+      }
+    }, 200);
+  };
+}
+
+const pickerGpsBtn = $('btn-picker-use-gps');
+if (pickerGpsBtn) {
+  pickerGpsBtn.onclick = () => {
+    if (!navigator.geolocation) return;
+    pickerGpsBtn.disabled = true;
+    safeSetText('loc-search-header-title', 'Locating your GPS position…');
+    navigator.geolocation.getCurrentPosition(
+      p => {
+        pickerGpsBtn.disabled = false;
+        const lat = p.coords.latitude;
+        const lon = p.coords.longitude;
+        if (currentLocPickerMode === 'pickup') {
+          $('pickup-search').value = 'Current location';
+          window.pickupCoordinates = `${lat},${lon}`;
+          window.pickupName = 'Current location';
+          pickupText = 'Current location';
+          $('pickup-label').textContent = 'Current location selected';
+        } else {
+          $('destination-search').value = 'Current location';
+          window.destinationCoordinates = `${lat},${lon}`;
+          window.destinationName = 'Current location';
+        }
+        closeLocationPicker();
+      },
+      () => {
+        pickerGpsBtn.disabled = false;
+        safeSetText('loc-search-header-title', 'Location unavailable');
+      },
+      { timeout: 10000 }
+    );
+  };
+}
+
+// Wire From and To inputs to open overlay without disrupting UI
+$('pickup-search').onclick = () => openLocationPicker('pickup');
+$('destination-search').onclick = () => openLocationPicker('dest');
+
+// Wire Departure shortcut "Leave Now" button
+const btnLeaveNow = $('btn-leave-now');
+if (btnLeaveNow) {
+  btnLeaveNow.onclick = () => {
+    const now = new Date();
+    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    $('rider-departure').value = local;
+  };
+}
+
+// Wire Full Map View filters & back button
+document.querySelectorAll('.btn-map-filter-chip').forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll('.btn-map-filter-chip').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const f = btn.getAttribute('data-filter');
+    activeBusType = f;
+    paint();
+  };
+});
+const backToPlannerBtn = $('btn-back-to-planner');
+if (backToPlannerBtn && typeof showScreen === 'function') {
+  backToPlannerBtn.onclick = () => showScreen('plan');
+}
+
 let pickupText = 'Fetch my location';
 let pickupTimer, pickupVersion = 0, pickupMarker = null;
 $('pickup-search').oninput = () => {
@@ -1264,16 +1442,23 @@ planButton.onclick = async () => {
   }
   planButton.disabled = true; journeyOutput.textContent = 'Finding smart bus journeys…';
   try {
-    const d = await get('/journeys?' + new URLSearchParams({ from: origin, to: dest, mode: priority.value, ...($('rider-departure').value ? { depart: $('rider-departure').value } : {}) }));
+    const priorityVal = $('journey-priority')?.value || priority?.value || 'fastest';
+    const d = await get('/journeys?' + new URLSearchParams({ from: origin, to: dest, mode: priorityVal, ...($('rider-departure').value ? { depart: $('rider-departure').value } : {}) }));
     journeyOutput.replaceChildren();
     if (!d.options || !d.options.length) {
       const emptyCard = element('div', '');
       emptyCard.className = 'planner-no-results-card';
       emptyCard.innerHTML = `
         <div class="no-results-icon">🧭</div>
-        <h3>No direct or transfer journey found</h3>
-        <p>Try searching from a nearby major bus stand (e.g. Kashmere Gate, Anand Vihar, Dhaula Kuan, Rajiv Chowk) or adjust your departure time.</p>
-        <button type="button" class="btn-retry-nearby" onclick="$('rider-departure').value=''; $('plan-btn').click();">Reset departure time & search again</button>
+        <h3>Route suggestions via major transit hubs</h3>
+        <p>No direct corridor found for this specific stop pair. Connect via Delhi's high-frequency transit hubs:</p>
+        <div class="quick-hub-shortcuts">
+          <button type="button" class="btn-hub-chip" onclick="$('destination-search').value='Kashmere Gate'; window.destinationCoordinates='28.6675,77.2285'; $('find-bus-btn').click();">🚏 Kashmere Gate ISBT</button>
+          <button type="button" class="btn-hub-chip" onclick="$('destination-search').value='Anand Vihar'; window.destinationCoordinates='28.6469,77.3160'; $('find-bus-btn').click();">🚏 Anand Vihar ISBT</button>
+          <button type="button" class="btn-hub-chip" onclick="$('destination-search').value='Rajiv Chowk'; window.destinationCoordinates='28.6328,77.2195'; $('find-bus-btn').click();">🚏 Rajiv Chowk / CP</button>
+          <button type="button" class="btn-hub-chip" onclick="$('destination-search').value='Dhaula Kuan'; window.destinationCoordinates='28.5925,77.1610'; $('find-bus-btn').click();">🚏 Dhaula Kuan</button>
+        </div>
+        <button type="button" class="btn-retry-nearby" onclick="$('rider-departure').value=''; $('find-bus-btn').click();">Reset departure time & search again</button>
       `;
       journeyOutput.append(emptyCard);
       return;
@@ -1375,13 +1560,13 @@ planButton.onclick = async () => {
               <div class="smart-leg-item">
                 <div class="leg-step-badge">Leg ${lIdx + 1}</div>
                 <div class="leg-step-info">
-                  <div class="leg-step-route">🚌 Route <strong>${leg.route}</strong> <span class="leg-time">${leg.ride_min} min ride</span></div>
+                  <div class="leg-step-route">🚌 Route <strong>${formatRoute(leg.route)}</strong> <span class="leg-time">${leg.ride_min} min ride</span></div>
                   <div class="leg-step-stops">${leg.board.name} ➔ ${leg.alight.name} (${leg.stops} stops)</div>
                 </div>
               </div>
               ${lIdx < o.legs.length - 1 ? `
                 <div class="leg-transfer-divider">
-                  <span>🔁 Transfer at <strong>${o.legs[lIdx].alight.name}</strong> · ~${o.transfer_min || 3} min buffer</span>
+                  <span>🔁 Interchange at <strong>${o.legs[lIdx].alight.name}</strong> · ~${o.transfer_min || 3} min buffer</span>
                 </div>
               ` : ''}
             `).join('')}
@@ -1396,7 +1581,7 @@ planButton.onclick = async () => {
       html += `
         <div class="smart-journey-header">
           <div class="route-badge-wrap">
-            <span class="smart-route-badge">${o.route}</span>
+            <span class="smart-route-badge">${formatRoute(o.route)}</span>
             ${transferPillHtml}
           </div>
           <div class="smart-duration">
@@ -1422,13 +1607,11 @@ planButton.onclick = async () => {
         <div class="journey-fare-row">
           <div class="fare-pills-wrap">
             <span class="fare-cost-tag">🎫 ₹${fareObj.standard} (Non-AC) · ❄ ₹${fareObj.ac} (AC)</span>
-            <span class="pink-ticket-tag">🌸 Free Pink Pass</span>
+            <span class="pink-ticket-tag">🌸 Free Pink Pass (Women)</span>
           </div>
-          <button type="button" class="btn-get-ticket">E-Ticket ➔</button>
         </div>
-        <div class="journey-card-actions-grid">
-          <button type="button" class="btn-view-map-link">🗺️ View Map</button>
-          <button type="button" class="btn-track-live-route">Live Tracker ➔</button>
+        <div class="journey-card-actions-single">
+          <button type="button" class="btn-view-map-link">🗺️ View Complete Route on Map</button>
         </div>
       `;
 
@@ -1564,26 +1747,10 @@ planButton.onclick = async () => {
         safeSetText('map-description', `${o.board.name} → ${o.alight.name} · ${stations.length || o.stops} stops along road`);
       };
 
-      const openTrackerAction = (e) => {
-        if (e) e.stopPropagation();
-        if (typeof recordUserSearchedRoute === 'function') {
-          recordUserSearchedRoute(o.route, `${o.board.name} to ${o.alight.name}`);
-        }
-        openBusTracker(nearestBus, o.route, o.route, o.segments);
-      };
-
-      card.querySelector('.btn-track-live-route').onclick = openTrackerAction;
       const viewMapBtn = card.querySelector('.btn-view-map-link');
       if (viewMapBtn) viewMapBtn.onclick = showRouteOnMap;
-      const getTicketBtn = card.querySelector('.btn-get-ticket');
-      if (getTicketBtn) {
-        getTicketBtn.onclick = (e) => {
-          e.stopPropagation();
-          openDigitalTicket(o.route, o.board.name, o.alight.name, fareObj, activeBusType === 'ac');
-        };
-      }
       showRouteOnMapGlobal = showRouteOnMap;
-      card.onclick = openTrackerAction;
+      card.onclick = showRouteOnMap;
       journeyOutput.append(card);
     });
   } catch (e) {

@@ -133,10 +133,16 @@ def journeys(from_: str = Query(..., alias="from", min_length=1, max_length=200)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     num_opts = int(getattr(max_options, "default", 5)) if not isinstance(max_options, int) else int(max_options)
+    raw_options = p.plan_with_transfer(origin, dest, depart, mode, num_opts)
+    for opt in raw_options:
+        opt["route"] = clean_route_name(opt.get("route", ""))
+        if "legs" in opt:
+            for leg in opt["legs"]:
+                leg["route"] = clean_route_name(leg.get("route", ""))
     return {"depart": depart.isoformat(), "mode": mode, "synthetic": cfg.get("synthetic", False),
             "origin": {"lat": origin[0], "lon": origin[1]},
             "destination": {"lat": dest[0], "lon": dest[1]},
-            "options": p.plan_with_transfer(origin, dest, depart, mode, num_opts)}
+            "options": raw_options}
 
 @app.get("/crowding/route/{route}")
 def route_crowding(route: str, day_type: Literal["weekday", "weekend"] = "weekday",
@@ -190,17 +196,27 @@ def transit_stops(lat: float = Query(..., ge=-90, le=90), lon: float = Query(...
     from src.transit import nearby_stops
     return nearby_stops(lat, lon)
 
+def clean_route_name(name: str) -> str:
+    if not name:
+        return ""
+    import re
+    return re.sub(r'(?i)(?:_|\b)(?:UP|DOWN)\b', '', str(name)).strip()
+
+
 @app.get("/transit/routes/search")
 def search_transit_routes(q: str = Query(..., min_length=1, max_length=50)):
     import pandas as pd
     from src.transit import tables
     _, routes, _ = tables()
     clean_q = q.strip().upper()
-    m1 = routes[routes.route_short_name.str.upper().str.startswith(clean_q)]
-    m2 = routes[routes.route_short_name.str.upper().str.contains(clean_q, regex=False)]
-    m3 = routes[routes.route_desc.str.upper().str.contains(clean_q, regex=False)]
+    # Exclude DOWN routes so user only sees clean UP routes without confusion
+    up_routes = routes[~routes.route_short_name.str.upper().str.endswith("DOWN")].copy()
+    m1 = up_routes[up_routes.route_short_name.str.upper().str.startswith(clean_q)]
+    m2 = up_routes[up_routes.route_short_name.str.upper().str.contains(clean_q, regex=False)]
+    m3 = up_routes[up_routes.route_desc.str.upper().str.contains(clean_q, regex=False)]
     combined = pd.concat([m1, m2, m3]).drop_duplicates(subset=["route_id"]).head(12)
-    cols = ["route_id", "route_short_name", "route_long_name", "route_desc"]
+    combined["display_name"] = combined["route_short_name"].apply(clean_route_name)
+    cols = ["route_id", "route_short_name", "display_name", "route_long_name", "route_desc"]
     return {"routes": records(combined[cols])}
 
 

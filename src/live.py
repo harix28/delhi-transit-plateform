@@ -16,6 +16,12 @@ _fetched = 0
 _sim_coords = None
 
 
+def clean_route_name(name: str) -> str:
+    if not name:
+        return ""
+    return re.sub(r'(?i)(?:_|\b)(?:UP|DOWN)\b', '', str(name)).strip()
+
+
 @lru_cache(maxsize=1)
 def vehicle_types():
     import pandas as pd
@@ -107,6 +113,7 @@ def generate_simulated_vehicles(now: float):
             vehicles.append({
                 "id": bus_num,
                 "route_id": r_name,
+                "display_route": clean_route_name(r_name),
                 "trip_id": f"TRIP-{r_name}-{b_idx}",
                 "lat": round(lat, 6),
                 "lon": round(lon, 6),
@@ -123,7 +130,7 @@ def get_vehicles():
     global _cache, _fetched
     with _lock:
         now = time.time()
-        if _cache is not None and now - _fetched < 10:
+        if _cache is not None and now - _fetched < 1.0:
             return _cache
 
         key = os.getenv("TRANSPORTSTACK_API_KEY", "").strip()
@@ -144,9 +151,11 @@ def get_vehicles():
                                 continue
                             timestamp = int(v.timestamp) if v.HasField("timestamp") else None
                             age = int(now - timestamp) if timestamp else None
+                            r_id = v.trip.route_id or ""
                             vehicles.append({
                                 "id": v.vehicle.id or entity.id,
-                                "route_id": v.trip.route_id,
+                                "route_id": r_id,
+                                "display_route": clean_route_name(r_id),
                                 "trip_id": v.trip.trip_id,
                                 "lat": lat,
                                 "lon": lon,

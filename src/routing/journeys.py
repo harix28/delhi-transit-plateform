@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from pathlib import Path
+import re
 
 import pandas as pd
 
@@ -132,12 +133,26 @@ class JourneyPlanner:
                 raise ValueError("Coordinates are outside the valid range")
             return lat, lon
         key = norm_name(pd.Series([q])).iloc[0]
-        if not key:
-            raise ValueError("Enter a valid stop name")
-        exact = self.stops[self.stops["stop_norm"] == key]
-        hit = self.stops[self.stops["stop_norm"].str.contains(key, regex=False)]
-        if not exact.empty:
-            hit = exact
+        hit = pd.DataFrame()
+        if key:
+            exact = self.stops[self.stops["stop_norm"] == key]
+            if not exact.empty:
+                hit = exact
+            else:
+                hit = self.stops[self.stops["stop_norm"].str.contains(key, regex=False)]
+        if hit.empty:
+            # Fallback 1: Direct case-insensitive raw stop name match
+            raw_hit = self.stops[self.stops["stop_name"].str.contains(q.strip(), case=False, regex=False, na=False)]
+            if not raw_hit.empty:
+                hit = raw_hit
+            else:
+                # Fallback 2: Token match for composite stop names
+                tokens = [t for t in re.sub(r'[^a-zA-Z0-9]', ' ', q).split() if len(t) > 2]
+                for t in tokens:
+                    token_hit = self.stops[self.stops["stop_name"].str.contains(t, case=False, regex=False, na=False)]
+                    if not token_hit.empty:
+                        hit = token_hit
+                        break
         if hit.empty:
             raise ValueError(f"Could not find a location for '{q}'")
         r = hit.iloc[0]
@@ -446,6 +461,57 @@ class JourneyPlanner:
                         "crowding_coverage": round(sum(x != "unknown" for x in levels) / max(len(levels), 1), 3),
                         "time_basis": f"2-transfer transit corridor via {h1['name']} and {h2['name']}",
                     })
+                    break
+
+        # 5. Guaranteed Fallback: If still no results, expand search radius to 2500m
+        if not results:
+            direct_wide = self.plan(origin, dest, depart, mode, n, max_walk_m=2500)
+            if direct_wide:
+                results = [dict(o, transfers=0) for o in direct_wide]
+
+        if not results and hasattr(self, "major_hubs") and self.major_hubs:
+            sorted_hubs = sorted(
+                self.major_hubs,
+                key=lambda h: haversine_m(origin[0], origin[1], h["lat"], h["lon"]) + haversine_m(dest[0], dest[1], h["lat"], h["lon"])
+            )
+            for hub in sorted_hubs[:6]:
+                hub_pt = (hub["lat"], hub["lon"])
+                l1_opts = self.plan(origin, hub_pt, depart, mode, 2, max_walk_m=2500)
+                if not l1_opts:
+                    continue
+                l1 = l1_opts[0]
+                t2 = depart + timedelta(minutes=l1["total_min"] + 4)
+                l2_opts = self.plan(hub_pt, dest, t2, mode, 2, max_walk_m=2500)
+                if not l2_opts:
+                    continue
+                l2 = l2_opts[0]
+                if l1["route_id"] == l2["route_id"] or l1["route"] == l2["route"]:
+                    continue
+                levels = l1["crowding_by_stretch"] + l2["crowding_by_stretch"]
+                worst = max([l1["crowding"], l2["crowding"]], key=lambda x: RANK[x])
+                results.append({
+                    "route": f"{l1['route']} + {l2['route']}",
+                    "route_id": f"{l1['route_id']}+{l2['route_id']}",
+                    "total_min": round(l1["total_min"] + l2["total_min"] + 4, 1),
+                    "ride_min": round(l1["ride_min"] + l2["ride_min"], 1),
+                    "walk_min": round(l1["walk_min"] + l2["walk_min"], 1),
+                    "wait_min": round(l1["wait_min"] + l2["wait_min"], 1),
+                    "transfer_min": 4,
+                    "transfers": 1,
+                    "transfer_stop": hub["stop_name"],
+                    "legs": [l1, l2],
+                    "board": l1["board"],
+                    "alight": l2["alight"],
+                    "stations": l1.get("stations", []) + l2.get("stations", []),
+                    "geometry": l1.get("geometry", []) + l2.get("geometry", []),
+                    "segments": l1.get("segments", []) + l2.get("segments", []),
+                    "crowding": worst,
+                    "confidence": min([l1["confidence"], l2["confidence"]], key=lambda x: CONF_RANK[x]),
+                    "crowding_by_stretch": levels,
+                    "crowding_coverage": round(sum(x != "unknown" for x in levels) / max(len(levels), 1), 3),
+                    "time_basis": f"{l1['time_basis']} · Transit corridor via {hub['name']}",
+                })
+                if len(results) >= n:
                     break
 
         if mode == "comfortable":
