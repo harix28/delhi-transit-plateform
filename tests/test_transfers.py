@@ -22,3 +22,22 @@ def test_two_bus_journey_has_ordered_legs_and_buffer():
     assert journey["transfer_stop"]=="X"
     assert journey["total_min"]==round(sum(leg["total_min"] for leg in journey["legs"])+2,1)
     assert p.plan_with_transfer((28.66,77.2),(28.6,77.2),datetime(2026,11,20,8))==[]
+
+
+def test_faster_transfer_competes_with_direct_route():
+    p=JourneyPlanner.__new__(JourneyPlanner)
+    p.cfg=load_config();p.cfg["journey"]["walk_max_m"]=100
+    p.schedule=None;p.city={};p.crowd=None
+    p.speed={("slow","weekday",8):3,("fast1","weekday",8):60,("fast2","weekday",8):60}
+    p.stops=pd.DataFrame({"stop_id":["a","x","b"],"stop_name":["A","X","B"],"stop_lat":[28.6,28.63,28.66],"stop_lon":[77.2]*3})
+    rows=[]
+    for route,indices in [("slow",[0,2]),("fast1",[0,1]),("fast2",[1,2])]:
+        for seq,index in enumerate(indices):
+            row=p.stops.iloc[index].to_dict()
+            row.update(route_id=route,route_short=route,direction_id=0,seq=seq,dist_m=index*3300.)
+            rows.append(row)
+    p.rs=pd.DataFrame(rows)
+    result=p.plan_with_transfer((28.6,77.2),(28.66,77.2),datetime(2026,11,20,8),n=1)
+    assert result[0]["transfers"]==1
+    assert result[0]["route"]=="fast1 + fast2"
+    assert p.plan_with_transfer((0,0),(28.66,77.2),datetime(2026,11,20,8))==[]

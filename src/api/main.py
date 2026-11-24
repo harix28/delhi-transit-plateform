@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -25,34 +25,7 @@ IST = ZoneInfo("Asia/Kolkata")
 
 @asynccontextmanager
 async def lifespan(app):
-    global planner, startup_error, cfg
-    try:
-        prod_processed = ROOT / "data/processed"
-        if (prod_processed / "stops.parquet").exists() and (prod_processed / "route_stops.parquet").exists():
-            cfg.clear()
-            cfg.update(load_config(ROOT / "config.yaml"))
-            planner = JourneyPlanner(prod_processed, cfg)
-            logging.info("Full Delhi transit network active with %d stops.", len(planner.stops))
-        else:
-            planner = JourneyPlanner(resolve(cfg, "processed"), cfg)
-    except Exception as exc:
-        startup_error = str(exc)
-        logging.warning("Planner initial load failed: %s. Initiating automatic fallback...", exc)
-        try:
-            demo_processed = ROOT / "data/demo/processed"
-            demo_cfg_path = ROOT / "config.demo.yaml"
-            if not demo_processed.exists() or not (demo_processed / "stops.parquet").exists():
-                from scripts.create_demo import create_demo
-                create_demo()
-            if demo_cfg_path.exists():
-                demo_cfg = load_config(demo_cfg_path)
-                cfg.clear()
-                cfg.update(demo_cfg)
-                planner = JourneyPlanner(resolve(cfg, "processed"), cfg)
-                startup_error = None
-                logging.info("Demo transit planner active.")
-        except Exception as fallback_exc:
-            logging.error("Automatic fallback failed: %s", fallback_exc)
+    init_planner()
     yield
 
 app = FastAPI(title="Delhi Transit Intelligence", version="0.2.0", lifespan=lifespan)
@@ -63,35 +36,16 @@ origins = os.getenv("CORS_ORIGINS", "http://localhost:5500,http://127.0.0.1:5500
 app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET"], allow_headers=["*"])
 
 def init_planner():
-    global planner, startup_error, cfg
+    """Load exactly the selected dataset; failures remain visible to health checks."""
+    global planner, startup_error
+    planner = None
     try:
-        prod_processed = ROOT / "data/processed"
-        if (prod_processed / "stops.parquet").exists() and (prod_processed / "route_stops.parquet").exists():
-            cfg.clear()
-            cfg.update(load_config(ROOT / "config.yaml"))
-            planner = JourneyPlanner(prod_processed, cfg)
-            startup_error = None
-            logging.info("Primary Delhi transit dataset active (%d stops).", len(planner.stops))
-            return planner
+        planner = JourneyPlanner(resolve(cfg, "processed"), cfg)
+        startup_error = None
     except Exception as exc:
-        logging.warning("Primary planner init failed: %s", exc)
-
-    # Fallback to demo
-    try:
-        demo_cfg_path = ROOT / "config.demo.yaml"
-        if not (ROOT / "data/demo/processed/stops.parquet").exists():
-            from scripts.create_demo import create_demo
-            create_demo()
-        if demo_cfg_path.exists():
-            demo_cfg = load_config(demo_cfg_path)
-            cfg.clear()
-            cfg.update(demo_cfg)
-            planner = JourneyPlanner(resolve(cfg, "processed"), cfg)
-            startup_error = None
-            return planner
-    except Exception as exc:
-        logging.error("Demo fallback planner init failed: %s", exc)
-    return None
+        startup_error = str(exc)
+        logging.exception("Transit dataset initialization failed")
+    return planner
 
 def ready():
     global planner
@@ -105,11 +59,15 @@ def records(df):
     return json.loads(df.to_json(orient="records"))
 
 @app.get("/health")
-def health():
-    p = planner or init_planner()
+def health(response: Response):
+    p = planner
+    if p is None:
+        response.status_code = 503
     return {"status": "ok" if p is not None else "not_ready", "ready": p is not None,
             "dataset": cfg.get("dataset", "local"), "synthetic": cfg.get("synthetic", False),
-            "timezone": "Asia/Kolkata", "direct_routes_only": False}
+            "timezone": "Asia/Kolkata", "direct_routes_only": False,
+            "timetable_available": p is not None and p.schedule is not None,
+            "speed_data_available": p is not None and bool(p.speed or p.city)}
 
 @app.get("/stops")
 def stops(q: str = "", limit: int = Query(200, ge=1, le=1000)):
@@ -160,8 +118,6 @@ def route_crowding(route: str, day_type: Literal["weekday", "weekend"] = "weekda
     p = ready()
     cpath = ROOT / cfg.get("paths", {}).get("processed", "data/processed") / "crowding.parquet"
     if not cpath.exists():
-        cpath = ROOT / "data/processed/crowding.parquet"
-    if not cpath.exists():
         raise HTTPException(503, "Crowding table not built yet")
     try:
         import pyarrow.parquet as pq
@@ -177,7 +133,8 @@ def route_crowding(route: str, day_type: Literal["weekday", "weekend"] = "weekda
         )
         f = table.to_pandas().sort_values("seg")
     except Exception:
-        f = pd.DataFrame()
+        logging.exception("Unable to read crowding data")
+        raise HTTPException(503, "Crowding data is unavailable")
     cols = ["seg", "load_est", "load_low", "load_high", "ratio", "level", "confidence", "n_trips"]
     existing_cols = [c for c in cols if c in f.columns]
     return {"route": route.upper(), "segments": records(f[existing_cols].round(2)) if not f.empty else []}
@@ -188,21 +145,20 @@ def top_crowded(day_type: Literal["weekday", "weekend"] = "weekday",
     p = ready()
     cpath = ROOT / cfg.get("paths", {}).get("processed", "data/processed") / "crowding.parquet"
     if not cpath.exists():
-        cpath = ROOT / "data/processed/crowding.parquet"
-    if not cpath.exists():
         raise HTTPException(503, "Crowding table not built yet")
     try:
         import pyarrow.parquet as pq
         import pandas as pd
         table = pq.read_table(
             cpath,
-            filters=[("day_type", "==", day_type), ("level", "in", ["standing", "crowded"])]
+            filters=[("day_type", "==", day_type)]
         )
         f = table.to_pandas()
         f = f[f.confidence.map(CONF_RANK) >= CONF_RANK[min_confidence]]
         f = f.sort_values("ratio", ascending=False).head(limit)
     except Exception:
-        f = pd.DataFrame()
+        logging.exception("Unable to read crowding data")
+        raise HTTPException(503, "Crowding data is unavailable")
     if f.empty:
         return {"day_type": day_type, "items": []}
     names = p.rs[["route_id", "direction_id", "seq", "stop_name", "stop_lat", "stop_lon"]].drop_duplicates(subset=["route_id", "direction_id", "seq"]).rename(columns={"seq": "seg", "stop_name": "from_stop"})
@@ -235,7 +191,7 @@ def live_vehicles():
 @app.get("/transit/stops")
 def transit_stops(lat: float = Query(..., ge=-90, le=90), lon: float = Query(..., ge=-180, le=180)):
     from src.transit import nearby_stops
-    return nearby_stops(lat, lon)
+    return nearby_stops(lat, lon, cfg)
 
 def clean_route_name(name: str) -> str:
     if not name:
@@ -248,10 +204,10 @@ def clean_route_name(name: str) -> str:
 def search_transit_routes(q: str = Query(..., min_length=1, max_length=50)):
     import pandas as pd
     from src.transit import tables
-    _, routes, _ = tables()
+    _, routes, _ = tables(cfg)
     clean_q = q.strip().upper()
     # Exclude DOWN routes so user only sees clean UP routes without confusion
-    up_routes = routes[~routes.route_short_name.str.upper().str.endswith("DOWN")].copy()
+    up_routes = routes.copy()
     m1 = up_routes[up_routes.route_short_name.str.upper().str.startswith(clean_q)]
     m2 = up_routes[up_routes.route_short_name.str.upper().str.contains(clean_q, regex=False)]
     m3 = up_routes[up_routes.route_desc.str.upper().str.contains(clean_q, regex=False)]
@@ -262,56 +218,32 @@ def search_transit_routes(q: str = Query(..., min_length=1, max_length=50)):
 
 
 @app.get("/transit/routes/{route_id}")
-def transit_route(route_id: str):
+def transit_route(route_id: str, direction_id: int = Query(0, ge=0, le=1)):
     from src.transit import route_geometry
-    return route_geometry(route_id)
+    return route_geometry(route_id, direction_id, cfg=cfg)
 
 
 @app.get("/transit/routes/{route_id}/stops")
-def route_stops(route_id: str, direction_id: int = 0):
-    import re
-    from src.transit import tables
-    _, _, rs = tables()
-    clean_r = str(route_id).strip().upper()
-    clean_norm = re.sub(r'(?i)[_\s-]*(?:UP|DOWN)$', '', clean_r)
-    norm_rs = rs.route_short.astype(str).str.upper().str.replace(r"[_\s-]*(?:UP|DOWN)$", "", regex=True)
-
-    matches = rs[(rs.route_id == route_id) & (rs.direction_id == direction_id)].sort_values("seq")
-    if matches.empty:
-        matches = rs[(rs.route_short == clean_r) & (rs.direction_id == direction_id)].sort_values("seq")
-    if matches.empty:
-        matches = rs[(norm_rs == clean_norm) & (rs.direction_id == direction_id)].sort_values("seq")
-    if matches.empty:
-        matches = rs[rs.route_id == route_id].sort_values("seq")
-    if matches.empty:
-        matches = rs[rs.route_short == clean_r].sort_values("seq")
-    if matches.empty:
-        matches = rs[norm_rs == clean_norm].sort_values("seq")
-    if matches.empty:
-        matches = rs[rs.route_short.str.upper().str.startswith(clean_norm, na=False)].sort_values("seq")
-    if matches.empty:
-        raise HTTPException(404, "No stops found for this route")
-    matches = matches.drop_duplicates(subset=["seq"]).sort_values("seq")
-    cols = ["stop_id", "stop_name", "stop_lat", "stop_lon", "seq"]
-    return {
-        "route_id": route_id,
-        "direction_id": int(matches.iloc[0].direction_id) if "direction_id" in matches.columns else direction_id,
-        "route_short": str(matches.iloc[0].route_short) if "route_short" in matches.columns else route_id,
-        "stops": records(matches[cols])
-    }
+def route_stops(route_id: str, direction_id: int = Query(0, ge=0, le=1)):
+    from src.transit import route_stop_table
+    matches = route_stop_table(route_id, direction_id, cfg)
+    return {"route_id": str(matches.iloc[0].route_id),
+            "direction_id": int(matches.iloc[0].direction_id),
+            "route_short": str(matches.iloc[0].route_short),
+            "stops": records(matches[["stop_id", "stop_name", "stop_lat", "stop_lon", "seq"]])}
 
 
 @app.get("/transit/search")
 def search_transit_stops(q: str = Query(..., min_length=2, max_length=100)):
     from src.transit import tables
-    stops, _, _ = tables()
+    stops, _, _ = tables(cfg)
     matches = stops[stops.stop_name.str.contains(q.strip(), case=False, regex=False, na=False)].head(8)
     return {"stops": records(matches[["stop_id", "stop_name", "stop_lat", "stop_lon"]])}
 
 
 @app.get("/evaluation")
 def evaluation():
-    path = ROOT / "outputs/evaluation.json"
+    path = resolve(cfg, "outputs") / "evaluation.json"
     if not path.exists():
         raise HTTPException(503, "Evaluation has not finished yet")
     return json.loads(path.read_text(encoding="utf-8"))
@@ -319,52 +251,23 @@ def evaluation():
 
 @app.get("/transit/stops/{stop_id}/departures")
 def scheduled_departures(stop_id: str):
-    from datetime import datetime, timedelta
-    from src.transit import tables
+    p = ready()
+    candidates = p.rs[p.rs.stop_id.astype(str) == str(stop_id)]
+    if candidates.empty:
+        raise HTTPException(404, "Unknown stop")
+    if p.schedule is None:
+        return {"source": "Timetable unavailable", "available": False, "departures": []}
     now = datetime.now(IST)
-    p = ROOT / "data/processed/schedule.sqlite"
-    if p.exists():
-        from src.routing.schedule import Schedule
-        _, routes, rs = tables()
-        candidates = rs[rs.stop_id.astype(str) == stop_id]
-        if not candidates.empty:
-            schedule = Schedule(p)
-            results = []
-            for row in candidates.itertuples():
-                tail = rs[(rs.route_id == row.route_id) & (rs.direction_id == row.direction_id) & (rs.seq > row.seq)].sort_values("seq")
-                if tail.empty:
-                    continue
-                trip = schedule.next_trip(row.route_id, stop_id, tail.iloc[0].stop_id, now, 0)
-                if trip:
-                    results.append({"route": row.route_short, "route_id": str(row.route_id), "departure": trip["departure"], "minutes": round(trip["wait"],1)})
-            if results:
-                unique = {(r["route_id"],r["departure"]):r for r in results}
-                return {"source":"GTFS timetable, not live ETA", "departures":sorted(unique.values(),key=lambda r:r["departure"])[:10]}
-
-    # Robust fallback: regular headway departure schedule
-    _, routes, rs = tables()
-    candidates = rs[rs.stop_id.astype(str) == str(stop_id)]
-    if candidates.empty:
-        candidates = rs[rs.route_short.astype(str).str.upper() == str(stop_id).upper()]
-    if candidates.empty:
-        return {"source": "DTC Timetable", "departures": []}
-
-    unique_routes = candidates.drop_duplicates(subset=["route_id"]).head(8)
     results = []
-    hour = now.hour
-    is_peak = (8 <= hour <= 11) or (17 <= hour <= 20)
-    base_headway = 10 if is_peak else 15
-    for i, row in enumerate(unique_routes.itertuples()):
-        for trip_idx in range(1, 3):
-            wait_min = (i * 4 + trip_idx * base_headway) % 32 + 3
-            dep_time = now + timedelta(minutes=wait_min)
-            dep_str = dep_time.strftime("%H:%M")
-            r_name = str(getattr(row, "route_short", getattr(row, "route_id", "BUS")))
-            results.append({
-                "route": r_name,
-                "route_id": str(row.route_id),
-                "departure": dep_str,
-                "minutes": float(wait_min)
-            })
-    results = sorted(results, key=lambda x: x["minutes"])[:10]
-    return {"source": "DTC Regular Headway Timetable", "departures": results}
+    for row in candidates.itertuples():
+        tail = p.rs[(p.rs.route_id == row.route_id) & (p.rs.direction_id == row.direction_id)
+                    & (p.rs.seq > row.seq)].sort_values("seq")
+        if tail.empty:
+            continue
+        trip = p.schedule.next_trip(row.route_id, stop_id, tail.iloc[0].stop_id, now, 0)
+        if trip:
+            results.append({"route": row.route_short, "route_id": str(row.route_id),
+                            "departure": trip["departure"], "minutes": round(trip["wait"], 1)})
+    unique = {(r["route_id"], r["departure"]): r for r in results}
+    return {"source": "GTFS timetable, not live ETA", "available": True,
+            "departures": sorted(unique.values(), key=lambda r: r["departure"])[:10]}

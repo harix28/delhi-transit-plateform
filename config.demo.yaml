@@ -14,7 +14,7 @@ journey:
 load:
   ci_z: 1.96
   minutes_per_stop: 2.5
-  uplift: 20.0
+  uplift: 1.0
 paths:
   outputs: data/demo/outputs
   processed: data/demo/processed

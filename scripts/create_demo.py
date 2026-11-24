@@ -18,6 +18,7 @@ from scripts.run_pipeline import stage_gtfs, stage_load, stage_speed
 def create_demo():
     cfg = load_config(ROOT / "config.yaml")
     cfg.update(dataset="Synthetic Delhi demo", synthetic=True)
+    cfg["load"]["uplift"] = 1.0
     cfg["paths"] = {key: f"data/demo/{key}" for key in ("raw", "processed", "outputs")}
     base = ROOT / "data/demo/raw"
     for directory in ("gtfs", "tickets", "gps"):

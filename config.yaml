@@ -8,7 +8,7 @@ tickets:
 
 load:
   minutes_per_stop: 2.5     # time offset per stop within a trip
-  uplift: 20.0              # Calibrated multiplier for missing riders (pass-holders, unrecorded boardings)
+  uplift: 20.0              # Unvalidated multiplier; calibrate against measured occupancy before accuracy claims
   ci_z: 1.96
 
 crowding:

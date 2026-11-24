@@ -1,0 +1,14 @@
+.git
+.venv
+.pytest_cache
+**/__pycache__
+.env
+.env.*
+!.env.example
+data/raw/tickets
+data/raw/gps
+data/raw/gtfs/stop_times.txt
+data/raw/gtfs/shapes.txt
+outputs/segment_load.csv
+outputs/holdout_comparison.csv
+output

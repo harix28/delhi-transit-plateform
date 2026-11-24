@@ -1,0 +1,89 @@
+/* Final layout rules: app-relative panels and one reserved navigation area. */
+:root { --nav-height: calc(72px + env(safe-area-inset-bottom, 0px)); }
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; width: 100%; overflow: hidden; }
+body { margin: 0; background: #e6ede8; }
+body .app { position: relative; isolation: isolate; width: 100%; max-width: 520px; height: 100dvh; min-height: 0; margin: 0 auto; padding: 0; border-radius: 0; overflow: hidden; }
+.app .rail { position: absolute; inset: auto 0 0; width: 100%; max-width: none; height: var(--nav-height); padding: 4px 8px calc(4px + env(safe-area-inset-bottom, 0px)); z-index: 1600; background: #fff; }
+.rail .rail-items { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); width: 100%; height: 100%; gap: 2px; }
+.rail .mobile-tab { display: flex; align-items: center; justify-content: center; flex-direction: column; min-width: 0; width: 100%; min-height: 52px; height: 100%; margin: 0; padding: 6px 2px; gap: 4px; }
+.mobile-tab span { font-size: 11px; white-space: nowrap; }
+.app .workspace, .app .full-screen { height: calc(100% - var(--nav-height)); min-height: 0; }
+.app.map-mode .workspace, .app.map-mode .map-panel { height: calc(100% - var(--nav-height)); min-height: 0; }
+.app.map-mode .workspace .map-panel { height: 100%; }
+.app .map-panel { position: relative; width: 100%; min-height: 0; }
+.app #street-map { inset: 0; height: 100%; min-height: 0; width: 100%; }
+.app[data-screen=plan] .nearby-sheet, .app[data-screen=nearby] .nearby-sheet { position: absolute; inset: 0; height: 100%; max-height: none; padding: max(22px, env(safe-area-inset-top)) 20px 28px; overflow-y: auto; overflow-x: hidden; border-radius: 0; }
+.app #screen-intro { padding: 0 0 22px; }
+#screen-intro h1 { font-size: clamp(26px, 7vw, 32px); line-height: 1.15; }
+#screen-intro p { font-size: 14px; line-height: 1.6; }
+.app .rider-home { display: block; min-width: 0; border-bottom: 0; padding-bottom: 0; }
+.app .bus-search-card, .app .journey-planner-card { width: 100%; min-width: 0; margin: 0 0 18px; padding: 18px; }
+.app .route-field-wrapper { min-width: 0; width: 100%; }
+.app .route-input-line { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 12px; }
+.app .line-field-col { flex: 1; min-width: 0; }
+.app .line-field-col input { width: 100%; min-width: 0; font-size: 16px; text-overflow: ellipsis; }
+.app .line-action-col { flex: 0 0 36px; }
+.app .route-connector-row { position: relative; height: 36px; margin: 0; display: flex; align-items: center; justify-content: flex-end; padding: 0 10px; }
+.app .swap-button { position: static; margin: 0; width: 34px; height: 34px; }
+.app .bus-preferences { display: flex; gap: 6px; margin: 10px 0 18px; padding: 0; min-width: 0; }
+.app .bus-preferences label { min-width: 0; flex: 1; margin: 0; }
+.app .bus-preferences span { white-space: normal !important; font-size: 12px !important; padding: 12px 4px !important; min-height: 44px; }
+.app .planner-options-stack { display: grid; gap: 16px; }
+.app .planner-block-header { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.app input[type=datetime-local], .app select { width: 100%; min-width: 0; max-width: 100%; font-size: 16px; }
+.app .smart-journey-card { padding: 16px; margin-top: 16px; overflow-wrap: anywhere; }
+.app .smart-journey-header, .app .smart-journey-stops, .app .smart-chips-row, .app .fare-pills-wrap, .app .route-badge-wrap { flex-wrap: wrap !important; gap: 8px; }
+.app .smart-route-badge, .app .smart-rec-badge, .app .smart-chip, .app .fare-cost-tag, .app .pink-ticket-tag { white-space: normal !important; max-width: 100%; line-height: 1.5; }
+.app .smart-journey-stops .stop-name { min-width: 0; white-space: normal !important; }
+.journey-time-basis, #feed-status { font-size: 12px; line-height: 1.6; color: #5b7165; }
+#feed-status { padding: 8px 10px; margin: 0 0 12px; border-radius: 8px; background: #eef4ef; }
+.app[data-feed=demo] #feed-status { background: #fff3d6; color: #775408; }
+.app .full-map-controls-bar { position: absolute; top: max(12px, env(safe-area-inset-top)); left: 12px; right: 12px; width: auto; z-index: 700; }
+.app .map-bar-top, .app .map-bus-type-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.app #active-route-filter-bar { position: absolute; top: calc(max(12px, env(safe-area-inset-top)) + 112px); left: 12px; right: 12px; width: auto; max-width: none; display: flex; flex-wrap: wrap; gap: 8px; z-index: 650; }
+#filter-bar-text { flex: 1; min-width: 0; white-space: normal !important; overflow-wrap: anywhere; font-size: 12px; }
+.app .map-controls { bottom: 30px; right: 12px; z-index: 600; }
+.app .bus-tracker-sheet, .app .station-explorer-sheet { position: absolute; inset: 0 0 var(--nav-height); width: 100%; height: auto; max-height: none; border-radius: 0; z-index: 1400; overflow-y: auto; overflow-x: hidden; }
+.app .station-explorer-sheet { display: flex; }
+.app .station-explorer-header { position: sticky; top: 0; z-index: 5; flex-shrink: 0; }
+.app .tracker-header { padding: 12px; gap: 8px; flex-wrap: wrap; }
+.app .tracker-title-box { min-width: 0; flex: 1 1 180px; }
+.app .tracker-route-pill { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.app .tracker-header-actions { flex: 0 1 auto; flex-wrap: wrap; margin-left: auto; gap: 6px; }
+.app .tracker-bus-reg, .app #tracker-bus-reg { white-space: normal !important; overflow-wrap: anywhere; }
+.app .tracker-status-card { display: flex; flex-wrap: wrap; margin: 14px; }
+.app .tracker-status-info { min-width: 0; flex: 1; }
+.app .tracker-status-info h3 { white-space: normal !important; }
+.app .sheet-close { width: 40px; height: 40px; min-width: 40px; border: 1px solid #d9e5dc; border-radius: 12px; background: #f0f5f1; color: #17432f; font-size: 24px; line-height: 1; }
+.app .location-search-screen { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2000; padding-top: env(safe-area-inset-top, 0px); }
+.app .loc-search-header { flex-shrink: 0; gap: 12px; }
+.app .loc-search-close { width: 44px; height: 44px; flex-shrink: 0; }
+.app .loc-unified-box { flex-shrink: 0; }
+.app .loc-unified-box input { min-width: 0; font-size: 16px; }
+.app #loc-search-results-list { flex: 1; min-height: 0; overflow-y: auto; }
+.app .loc-result-text { min-width: 0; }
+.app .loc-result-text strong { white-space: normal !important; overflow-wrap: anywhere; }
+.app.tracker-split-active .workspace { display: block !important; position: absolute; inset: 0 0 auto; height: calc((100% - var(--nav-height)) * .42) !important; }
+.app.tracker-split-active .workspace .map-panel { position: relative !important; inset: 0 !important; height: 100% !important; }
+.app.tracker-split-active #street-map { height: 100% !important; visibility: visible !important; }
+.app.tracker-split-active .nearby-sheet, .app.tracker-split-active .full-map-controls-bar, .app.tracker-split-active #active-route-filter-bar { display: none !important; }
+.app.tracker-split-active .bus-tracker-sheet.split-map-active { top: calc((100% - var(--nav-height)) * .42) !important; bottom: var(--nav-height) !important; height: auto !important; border-radius: 20px 20px 0 0 !important; }
+.app .full-screen { padding-bottom: 30px; overflow-y: auto; overflow-x: hidden; }
+.app #back-to-options { position: absolute; bottom: 22px; left: 14px; z-index: 750; }
+.app header { display: none !important; }
+.app [hidden] { display: none !important; }
+@media (max-width: 360px) { .app[data-screen=plan] .nearby-sheet, .app[data-screen=nearby] .nearby-sheet { padding-left: 12px; padding-right: 12px; } .app .journey-planner-card, .app .bus-search-card { padding: 14px; } .app .btn-tracker-map-header { padding: 8px; font-size: 11px; } }
+
+.app .loc-results-container { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+.app .loc-search-quick-actions { flex-shrink: 0; flex-wrap: wrap; gap: 8px; }
+.app .loc-search-quick-actions button { min-width: 0; white-space: normal; }
+.app .tracker-crowd-tag.unknown { background: #edf1f4; color: #526475; }
+.app .smart-leg-item, .app .leg-step-info { min-width: 0; }
+.app .leg-step-route, .app .leg-step-stops, .app .leg-transfer-divider { white-space: normal !important; overflow-wrap: anywhere; }
+
+.app #screen-panels { position: absolute; inset: 0 0 var(--nav-height); pointer-events: none; z-index: 1100; }
+.app #screen-panels > .full-screen { height: 100%; min-height: 0; pointer-events: auto; }
+.app .tracker-header, .app .tracker-status-card, .app .tracker-fleet-card { flex-shrink: 0; }
+.app .line-field-col, .app .loc-input-col { min-width: 0 !important; }
+.app .tracker-route-pill .route-number-large { max-width: 100%; white-space: normal !important; overflow-wrap: anywhere; }

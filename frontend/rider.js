@@ -3,8 +3,8 @@ const safeSetText = (id, text) => { const el = $(id); if (el) el.textContent = t
 const element = (tag, text) => { const e = document.createElement(tag); e.textContent = text; return e; };
 async function get(url) { const r = await fetch(url); const body = await r.json(); if (!r.ok) throw Error(typeof body.detail === 'string' ? body.detail : 'Data temporarily unavailable'); return body; }
 document.querySelector('.app').classList.add('map-mode');
-safeSetText('dataset-pill', 'Live GPS'); safeSetText('data-notice', 'Data: Delhi Transport Stack · Map: OpenStreetMap');
-safeSetText('map-headline', 'Delhi buses, live'); safeSetText('map-description', 'Loading latest positions…');
+safeSetText('dataset-pill', 'Checking GPS'); safeSetText('data-notice', 'Static GTFS routes · Map: OpenStreetMap');
+safeSetText('map-headline', 'Delhi bus network'); safeSetText('map-description', 'Loading latest positions…');
 if ($('planner-nav')) $('planner-nav').hidden = true; if ($('network-nav')) $('network-nav').hidden = true;
 if ($('map-nav')) { $('map-nav').classList.add('active'); $('map-nav').onclick = () => map.invalidateSize(); }
 const box = document.createElement('div'); box.id = 'street-map'; $('map').replaceWith(box);
@@ -35,7 +35,7 @@ async function openBusTracker(vehicle, routeId, routeName, segments, isBackgroun
   currentTrackedVehicle = vehicle;
   currentTrackedRouteId = routeId;
   currentTrackedRouteName = routeName;
-  if (segments !== undefined) currentTrackedSegments = segments;
+  if (segments !== undefined || !isBackgroundUpdate) currentTrackedSegments = segments || null;
 
   const sheet = $('bus-tracker-sheet');
   if (!sheet) return;
@@ -43,7 +43,7 @@ async function openBusTracker(vehicle, routeId, routeName, segments, isBackgroun
   const rawRouteCode = routeName || (vehicle && vehicle.route_id) || routeId || 'BUS';
   const cleanR = formatRoute(rawRouteCode);
   const routeCode = cleanR || rawRouteCode;
-  const queryRoute = routeId || rawRouteCode;
+  const queryRoute = !vehicle && routeId === routeName && !String(routeId).startsWith('code:') ? 'code:' + routeId : (routeId || rawRouteCode);
   const busId = (vehicle && vehicle.id) ? ('Bus ' + vehicle.id) : ('Route ' + routeCode);
   const isAC = vehicle && vehicle.bus_type === 'ac';
 
@@ -78,12 +78,13 @@ async function openBusTracker(vehicle, routeId, routeName, segments, isBackgroun
 
   const crowdBadge = $('tracker-crowd-badge');
   if (crowdBadge) {
-    let worst = 'seats';
+    let worst = 'unknown';
     if (Array.isArray(currentTrackedSegments) && currentTrackedSegments.length) {
       if (currentTrackedSegments.some(s => s.level === 'crowded')) worst = 'crowded';
       else if (currentTrackedSegments.some(s => s.level === 'standing')) worst = 'standing';
+      else if (currentTrackedSegments.every(s => s.level === 'seats')) worst = 'seats';
     }
-    const lbl = worst === 'seats' ? '🟢 Seats Likely' : (worst === 'standing' ? '🟡 Moderate Standing' : '🔴 High Crowding');
+    const lbl = worst === 'seats' ? '🟢 Seats Likely' : (worst === 'standing' ? '🟡 Moderate Standing' : (worst === 'crowded' ? '🔴 High Crowding' : 'Crowding unobserved'));
     crowdBadge.className = `tracker-crowd-tag ${worst}`;
     crowdBadge.textContent = lbl;
     crowdBadge.hidden = false;
@@ -191,7 +192,7 @@ async function openBusTracker(vehicle, routeId, routeName, segments, isBackgroun
             </div>
             <div class="fleet-chip-bottom">
               <span>📍 ~${distLabel} from pickup</span>
-              <span>⚡ Live GPS</span>
+              <span>${feedSynthetic ? 'Simulated position' : 'GPS position'}</span>
             </div>
           `;
 
@@ -204,7 +205,7 @@ async function openBusTracker(vehicle, routeId, routeName, segments, isBackgroun
       }
     }
 
-    let currentIdx = 0;
+    let currentIdx = -1;
     let minDist = Infinity;
 
     if (vehicle && vehicle.lat && vehicle.lon) {
@@ -229,8 +230,8 @@ async function openBusTracker(vehicle, routeId, routeName, segments, isBackgroun
       }
     }
 
-    const currentStop = stops[currentIdx];
-    if (currentStationEl) currentStationEl.textContent = currentStop.stop_name;
+    const currentStop = currentIdx >= 0 ? stops[currentIdx] : null;
+    if (currentStationEl) currentStationEl.textContent = currentStop ? currentStop.stop_name : 'Bus position unavailable';
 
     if (nextEtaEl) {
       if (minDist < 120) {
@@ -240,7 +241,7 @@ async function openBusTracker(vehicle, routeId, routeName, segments, isBackgroun
       } else if (minDist < Infinity) {
         nextEtaEl.innerHTML = `<span class="eta-pill enroute">● Between stops</span> (~${(minDist / 1000).toFixed(1)} km away) · Stop ${currentIdx + 1} of ${stops.length}`;
       } else {
-        nextEtaEl.innerHTML = `Stop 1 of ${stops.length} · ${stops.length} stops along route`;
+        nextEtaEl.innerHTML = `${stops.length} stops along route · no fresh GPS position`;
       }
     }
 
@@ -371,7 +372,7 @@ async function openBusTracker(vehicle, routeId, routeName, segments, isBackgroun
           const crowdLvl = crowdMap.get(stopKey);
           let crowdPill = '';
           if (crowdLvl) {
-            const lbl = crowdLvl === 'seats' ? 'Seats likely' : (crowdLvl === 'standing' ? 'Standing' : 'Crowded');
+            const lbl = crowdLvl === 'seats' ? 'Seats likely' : (crowdLvl === 'standing' ? 'Standing' : crowdLvl === 'crowded' ? 'Crowded' : 'Unobserved');
             crowdPill = `<span class="station-crowd-tag ${crowdLvl}">● ${lbl}</span>`;
           }
 
@@ -429,7 +430,7 @@ async function openBusTracker(vehicle, routeId, routeName, segments, isBackgroun
               const res = await get('/transit/stops/' + encodeURIComponent(stop.stop_id) + '/departures');
               depContainer.replaceChildren();
               if (!res.departures || !res.departures.length) {
-                depContainer.append(element('p', 'No scheduled departures in the next 2 hours.'));
+                depContainer.append(element('p', res.available === false ? 'Timetable data unavailable.' : 'No scheduled departures in the next 2 hours.'));
               } else {
                 res.departures.slice(0, 8).forEach(dep => {
                   const cleanDepR = formatRoute(dep.route);
@@ -497,20 +498,18 @@ function startAutoTrackerPolling() {
       return;
     }
     try {
-      const d = await get('/vehicles');
-      vehicles = d.vehicles || [];
-      paint();
+      await refresh();
       if (currentTrackedVehicle && currentTrackedVehicle.id) {
         const found = vehicles.find(v => v.id === currentTrackedVehicle.id);
-        if (found) currentTrackedVehicle = found;
+        currentTrackedVehicle = found && !found.stale ? found : null;
       } else if (currentTrackedRouteId || currentTrackedRouteName) {
         const rCode = currentTrackedRouteName || currentTrackedRouteId;
         const found = vehicles.find(v => !v.stale && (v.route_id === currentTrackedRouteId || v.route_id === rCode));
-        if (found) currentTrackedVehicle = found;
+        currentTrackedVehicle = found && !found.stale ? found : null;
       }
       await openBusTracker(currentTrackedVehicle, currentTrackedRouteId, currentTrackedRouteName, currentTrackedSegments, true);
     } catch (_) { }
-  }, 1500);
+  }, 30000);
 }
 
 function stopAutoTrackerPolling() {
@@ -529,6 +528,7 @@ if (closeTrackerBtn) {
       delete sheet.dataset.trackedRoute;
     }
     stopAutoTrackerPolling();
+    closeBusTracker();
   };
 }
 
@@ -610,16 +610,14 @@ if (trackerRefreshBtn) {
   trackerRefreshBtn.onclick = async () => {
     trackerRefreshBtn.classList.add('refreshing');
     try {
-      const d = await get('/vehicles');
-      vehicles = d.vehicles || [];
-      paint();
+      await refresh();
       if (currentTrackedVehicle && currentTrackedVehicle.id) {
         const found = vehicles.find(v => v.id === currentTrackedVehicle.id);
-        if (found) currentTrackedVehicle = found;
+        currentTrackedVehicle = found && !found.stale ? found : null;
       } else if (currentTrackedRouteId || currentTrackedRouteName) {
         const rCode = currentTrackedRouteName || currentTrackedRouteId;
         const found = vehicles.find(v => !v.stale && (v.route_id === currentTrackedRouteId || v.route_id === rCode));
-        if (found) currentTrackedVehicle = found;
+        currentTrackedVehicle = found && !found.stale ? found : null;
       }
       await openBusTracker(currentTrackedVehicle, currentTrackedRouteId, currentTrackedRouteName, currentTrackedSegments, true);
     } catch (err) {
@@ -776,13 +774,13 @@ if (busSearchInput && busSearchResults) {
 
         // Live bus matches section
         if (liveMatches.length > 0) {
-          const liveTitle = element('div', '● Live Running Buses');
+          const liveTitle = element('div', 'Buses with positions');
           liveTitle.className = 'search-results-section-header live';
           busSearchResults.append(liveTitle);
 
           liveMatches.forEach(v => {
             const isAC = v.bus_type === 'ac';
-            const cleanR = formatRoute(v.route_id || 'BUS');
+            const cleanR = formatRoute(v.display_route || v.route_id || 'BUS');
             const item = element('div', '');
             item.className = 'bus-search-item';
             item.innerHTML = `
@@ -947,7 +945,7 @@ function paint() {
 
     let html, size, anchor;
     if (zoom >= 13) {
-      html = `<div class="simple-bus-pill ${isAC ? 'ac' : ''}"><span class="bus-icon">🚌</span><span class="pill-rt">${v.route_id || 'BUS'}</span></div>`;
+      html = `<div class="simple-bus-pill ${isAC ? 'ac' : ''}"><span class="bus-icon">🚌</span><span class="pill-rt">${v.display_route || v.route_id || 'BUS'}</span></div>`;
       size = [64, 24]; anchor = [32, 12];
     } else {
       html = `<span class="simple-bus-dot ${isAC ? 'ac' : ''}" aria-hidden="true"></span>`;
@@ -956,7 +954,7 @@ function paint() {
 
     const popupHtml = `
       <div class="bus-popup-header">
-        <span class="bus-popup-badge ${isAC ? 'ac' : ''}">${v.route_id || 'BUS'}</span>
+        <span class="bus-popup-badge ${isAC ? 'ac' : ''}">${v.display_route || v.route_id || 'BUS'}</span>
         <strong>${v.id}</strong>
       </div>
       <p class="bus-popup-meta">${typeLabel} · ${updateTime}</p>
@@ -983,13 +981,13 @@ function paint() {
       p.onclick = (e) => {
         if (e.target.closest('.bus-track-action-btn')) {
           e.stopPropagation();
-          openBusTracker(v, v.route_id, v.route_id);
+          openBusTracker(v, v.route_id, v.display_route || v.route_id);
         }
       };
 
       marker.bindPopup(p);
       marker.on('click', () => {
-        openBusTracker(v, v.route_id, v.route_id);
+        openBusTracker(v, v.route_id, v.display_route || v.route_id);
       });
 
       marker.addTo(buses);
@@ -1005,14 +1003,36 @@ function paint() {
   }
 }
 
-async function refresh() {
-  try {
-    const d = await get('/vehicles');
-    vehicles = d.vehicles || [];
-    paint();
-  } catch (e) {
-    vehicles = []; paint();
+let feedRequest = null;
+let feedSynthetic = false;
+function updateFeedStatus(data) {
+  feedSynthetic = !!data.synthetic;
+  const fresh = (data.vehicles || []).filter(v => !v.stale).length;
+  const text = feedSynthetic ? 'Demo fleet · simulated' : data.available ? `${fresh} buses with fresh GPS` : 'Live GPS unavailable';
+  safeSetText('full-map-fleet-count', text);
+  safeSetText('dataset-pill', feedSynthetic ? 'Demo' : data.available ? 'Live GPS' : 'GPS unavailable');
+  safeSetText('data-notice', feedSynthetic ? 'Simulated positions for demonstration' : data.source);
+  let banner = $('feed-status');
+  if (!banner) {
+    banner = element('p', ''); banner.id = 'feed-status'; banner.setAttribute('role', 'status');
+    $('bus-search-card').prepend(banner);
   }
+  banner.textContent = text;
+  document.querySelector('.app').dataset.feed = feedSynthetic ? 'demo' : data.available ? 'live' : 'unavailable';
+}
+async function refresh() {
+  if (feedRequest) return feedRequest;
+  feedRequest = (async () => {
+    try {
+      const d = await get('/vehicles');
+      vehicles = d.vehicles || [];
+      updateFeedStatus(d);
+    } catch (error) {
+      vehicles = []; updateFeedStatus({available: false, source: 'Live GPS unavailable'});
+    }
+    paint();
+  })();
+  try { await feedRequest; } finally { feedRequest = null; }
 }
 map.on('moveend', paint);
 const clearFilterBtn = $('btn-clear-map-filter');
@@ -1034,7 +1054,7 @@ function formatRoute(r) {
 
 async function drawFullRouteOnMap(routeId, routeName, activeBus) {
   const cleanR = formatRoute(routeName || routeId);
-  const qRoute = routeId || cleanR;
+  const qRoute = !activeBus && routeId === routeName && !String(routeId).startsWith('code:') ? 'code:' + routeId : (routeId || cleanR);
   paths.clearLayers();
   filter = qRoute;
   paint();
@@ -1192,11 +1212,11 @@ async function drawFullRouteOnMap(routeId, routeName, activeBus) {
     }
 
     const trackerSheet = $('bus-tracker-sheet');
-    if (trackerSheet) trackerSheet.hidden = true;
+    if (trackerSheet && !isSplitMapActive) trackerSheet.hidden = true;
     const stationSheet = $('station-explorer-sheet');
     if (stationSheet) stationSheet.hidden = true;
 
-    if (typeof showScreen === 'function') showScreen('map');
+    if (!isSplitMapActive && typeof showScreen === 'function') showScreen('map');
     map.invalidateSize();
   } catch (err) {
     console.error('Error drawing route on map:', err);
@@ -1222,7 +1242,7 @@ async function openStationExplorer(stopId, stopName, distLabel) {
     container.replaceChildren();
 
     if (!res.departures || !res.departures.length) {
-      container.innerHTML = '<div class="station-empty-msg">No scheduled departures in the next two hours. Check back soon.</div>';
+      container.replaceChildren(element('p', res.available === false ? 'Timetable data is unavailable for this dataset.' : 'No scheduled departures in the next two hours.'));
       return;
     }
 
@@ -1323,7 +1343,7 @@ async function nearby(lat, lon) {
 $('locate-me').onclick = () => { if (!navigator.geolocation) return; $('nearby-location').textContent = 'Requesting your location…'; navigator.geolocation.getCurrentPosition(p => { map.setView([p.coords.latitude, p.coords.longitude], 15); nearby(p.coords.latitude, p.coords.longitude); }, () => { $('nearby-location').textContent = 'Location unavailable. Tap the map to choose a location.'; }, { timeout: 12000 }); };
 $('demo-location').textContent = 'Search map area'; $('demo-location').onclick = () => { filter = null; paths.clearLayers(); paint(); const c = map.getCenter(); nearby(c.lat, c.lng); }; map.on('click', e => nearby(e.latlng.lat, e.latlng.lng));
 $('zoom-in').onclick = () => map.zoomIn(); $('zoom-out').onclick = () => map.zoomOut(); $('fit').onclick = () => { filter = null; paths.clearLayers(); map.setView([28.6315, 77.2167], 13); paint(); };
-refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 1500); nearby(28.6315, 77.2167);
+refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 30000); nearby(28.6315, 77.2167);
 const readSaved = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } };
 const saveLocal = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch { return false; } };
 let recent = readSaved('transit.recents', []); if (!Array.isArray(recent)) recent = [];
@@ -1370,6 +1390,7 @@ $('clear-recents').onclick = () => { recent = []; saveLocal('transit.recents', r
 // =======================================================
 let activeLocField = 'pickup'; // 'pickup' or 'dest'
 let locPickerTimer = null;
+let locSearchVersion = 0;
 
 function setActiveLocField(field) {
   activeLocField = field;
@@ -1454,6 +1475,8 @@ function renderLocStopItem(s) {
       $('pickup-search').value = s.stop_name;
       window.pickupCoordinates = s.stop_lat + ',' + s.stop_lon;
       window.pickupName = s.stop_name;
+      window.selectedPickupName = s.stop_name;
+      window.selectedPickupCoordinates = window.pickupCoordinates;
       pickupText = s.stop_name;
       safeSetText('pickup-label', 'Pickup selected');
       if (pickupMarker) map.removeLayer(pickupMarker);
@@ -1493,6 +1516,7 @@ function renderLocStopItem(s) {
 }
 
 function triggerLocSearch(query) {
+  const searchVersion = ++locSearchVersion;
   clearTimeout(locPickerTimer);
   const list = $('loc-search-results-list');
   if (!list) return;
@@ -1514,6 +1538,7 @@ function triggerLocSearch(query) {
   locPickerTimer = setTimeout(async () => {
     try {
       const d = await get('/transit/search?q=' + encodeURIComponent(q));
+      if (searchVersion !== locSearchVersion) return;
       list.replaceChildren();
       if (!d.stops || !d.stops.length) {
         list.innerHTML = `<div class="loc-search-empty">No matching bus stops found for "${q}". Try another spelling.</div>`;
@@ -1633,6 +1658,7 @@ if (pickerGpsBtn) {
           $('pickup-search').value = 'Current location';
           window.pickupCoordinates = `${lat},${lon}`;
           window.pickupName = 'Current location';
+          window.selectedPickupCoordinates = null; window.selectedPickupName = null;
           pickupText = 'Current location';
           safeSetText('pickup-label', 'Current location selected');
           if (locFromInput) locFromInput.value = 'Current location';
@@ -1664,7 +1690,7 @@ const btnLeaveNow = $('btn-leave-now');
 if (btnLeaveNow) {
   btnLeaveNow.onclick = () => {
     const now = new Date();
-    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    const local = new Intl.DateTimeFormat('sv-SE', {timeZone: 'Asia/Kolkata', year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(now).replace(' ', 'T');
     $('rider-departure').value = local;
   };
 }
@@ -1675,8 +1701,7 @@ document.querySelectorAll('.btn-map-filter-chip').forEach(btn => {
     document.querySelectorAll('.btn-map-filter-chip').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     const f = btn.getAttribute('data-filter');
-    activeBusType = f;
-    paint();
+    setBusType(f);
   };
 });
 const backToPlannerBtn = $('btn-back-to-planner');
@@ -1717,6 +1742,7 @@ const fetchPickup = () => {
   $('pickup-label').textContent = 'Finding you…';
   navigator.geolocation.getCurrentPosition(p => {
     window.pickupCoordinates = p.coords.latitude + ',' + p.coords.longitude;
+    window.pickupName = 'Current location'; window.selectedPickupCoordinates = null; window.selectedPickupName = null;
     pickupText = 'Current location'; $('pickup-search').value = 'Current location';
     $('pickup-results').replaceChildren(); $('pickup-label').textContent = pickupText;
     map.setView([p.coords.latitude, p.coords.longitude], 15);
@@ -1854,7 +1880,7 @@ if (hotspotsBtn) {
     hotspotsBtn.classList.toggle('active', hotspotsActive);
     if (!hotspotsActive) {
       hotspots.clearLayers();
-      safeSetText('map-headline', 'Delhi buses, live');
+      safeSetText('map-headline', 'Delhi bus network');
       safeSetText('map-description', 'Live buses moving across Delhi · updates every 30s');
       return;
     }
@@ -1925,7 +1951,7 @@ if (departureInput && !departureInput.value) {
 
 planButton.onclick = async () => {
   const typedOrigin = $('pickup-search').value.trim();
-  const origin = typedOrigin === 'Current location' ? (window.pickupCoordinates || '') : (typedOrigin === window.selectedPickupName ? window.selectedPickupCoordinates : typedOrigin);
+  const origin = typedOrigin === 'Current location' ? (window.pickupCoordinates || '') : typedOrigin === window.pickupName ? window.pickupCoordinates : typedOrigin === window.selectedPickupName ? window.selectedPickupCoordinates : typedOrigin;
   const typedDestination = $('destination-search').value.trim();
   const dest = typedDestination === window.destinationName ? window.destinationCoordinates : typedDestination;
   if (!origin || !dest || origin === 'Current location') {
@@ -1962,9 +1988,9 @@ planButton.onclick = async () => {
       if (isTop && isComfortable) {
         recBadgeText = '⚡ SMART RECOMMENDED · SEATS LIKELY';
       } else if (isTop) {
-        recBadgeText = '⚡ RECOMMENDED · FASTEST ROUTE';
+        recBadgeText = priorityVal === 'comfortable' ? 'Recommended · historical comfort' : 'Recommended · fastest found';
       } else if (isComfortable) {
-        recBadgeText = '🛋️ HIGHEST SEAT PROBABILITY';
+        recBadgeText = 'Lower historical crowding';
       }
 
       // Filter all active buses on this route corridor
@@ -2018,7 +2044,7 @@ planButton.onclick = async () => {
           <div class="journey-fleet-banner scheduled">
             <div class="fleet-count-line">
               <span class="sched-icon">🕒</span>
-              <span>No live GPS bus broadcasting · Running on regular schedule</span>
+              <span>No fresh GPS position for this route</span>
             </div>
           </div>
         `;
@@ -2088,13 +2114,14 @@ planButton.onclick = async () => {
           <span class="stop-name dest">${o.alight.name}</span>
         </div>
         <div class="smart-chips-row">
-          <span class="smart-chip">🚶 ${o.walk_min}m walk</span>
-          <span class="smart-chip">⏳ ~${o.wait_min}m wait</span>
-          <span class="smart-chip">🚌 ${o.ride_min}m ride</span>
+          <span class="smart-chip">🚶 ${o.walk_min} min walk</span>
+          <span class="smart-chip">⏳ ~${o.wait_min} min wait</span>
+          <span class="smart-chip">🚌 ${o.ride_min} min ride</span>
           <span class="smart-crowd-chip ${crowdClass}">● ${crowdLabel}</span>
         </div>
         ${o.transfers && o.transfer_stop && (!o.legs || o.legs.length <= 1) ? `<div class="smart-transfer-info">🔁 Change bus at <strong>${o.transfer_stop}</strong> · ~${o.transfer_min} min buffer</div>` : ''}
         ${legsHtml}
+        <p class="journey-time-basis">${o.time_basis || 'Timing estimate'}${d.synthetic ? ' · Synthetic demo' : ''}</p>
         ${fleetPreviewHtml}
         <div class="journey-fare-row">
           <div class="fare-pills-wrap">
@@ -2246,8 +2273,8 @@ planButton.onclick = async () => {
 
       const openCheckpointView = (e) => {
         if (e) e.stopPropagation();
-        const routeToTrack = o.route_id || o.route;
-        openBusTracker(nearestBus, routeToTrack, o.route, o.segments);
+        const firstLeg = o.legs ? o.legs[0] : o;
+        openBusTracker(nearestBus, firstLeg.route_id || firstLeg.route, firstLeg.route, firstLeg.segments);
       };
 
       const checkpointBtn = card.querySelector('.btn-open-checkpoint-timeline');
@@ -2261,7 +2288,7 @@ planButton.onclick = async () => {
         legEl.style.cursor = 'pointer';
         legEl.onclick = (e) => {
           e.stopPropagation();
-          openBusTracker(null, legData.route_id || legData.route, legData.route, o.segments);
+          openBusTracker(null, legData.route_id || legData.route, legData.route, legData.segments);
         };
       });
 
@@ -2278,7 +2305,15 @@ planButton.onclick = async () => {
 const noteEl = $('bus-type-note');
 const typeMessage = () => { if (noteEl) noteEl.textContent = activeBusType === 'all' ? 'Showing all live buses. AC type, when known, is inferred from October tickets.' : 'Map filter: ' + (activeBusType === 'ac' ? 'AC' : 'Non-AC') + ' from consistent October ticket evidence. Unknown vehicles are hidden; journey options are not filtered.'; };
 activeBusType = ['ac', 'non-ac'].includes(preference) ? preference : 'all';
-document.querySelectorAll('input[name=bus-type]').forEach(r => { r.onchange = () => { activeBusType = r.value; saveLocal('transit.busType', r.value); typeMessage(); paint(); }; }); typeMessage();
+function setBusType(value) {
+  activeBusType = ['ac', 'non-ac'].includes(value) ? value : 'all';
+  saveLocal('transit.busType', activeBusType);
+  document.querySelectorAll('input[name=bus-type]').forEach(r => r.checked = r.value === activeBusType);
+  document.querySelectorAll('.btn-map-filter-chip').forEach(b => b.classList.toggle('active', b.dataset.filter === activeBusType));
+  if (typeof syncPreferences === 'function') syncPreferences();
+  typeMessage(); paint();
+}
+document.querySelectorAll('input[name=bus-type]').forEach(r => { r.onchange = () => setBusType(r.value); }); typeMessage();
 
 // =======================================================
 // SYSTEM BACK BUTTON & GESTURE NAVIGATION

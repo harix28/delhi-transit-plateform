@@ -5,7 +5,7 @@ import threading
 import re
 import math
 from functools import lru_cache
-from src.config import ROOT
+from src.config import ROOT, load_config, resolve
 import httpx
 from google.transit import gtfs_realtime_pb2
 
@@ -25,7 +25,7 @@ def clean_route_name(name: str) -> str:
 @lru_cache(maxsize=1)
 def vehicle_types():
     import pandas as pd
-    path = ROOT / "data/processed/vehicle_types.parquet"
+    path = resolve(load_config(), "processed") / "vehicle_types.parquet"
     if not path.exists():
         return {}
     return {str(r.vehicle_id): {"type": r.type, "observations": int(r.count), "agreement": float(r.agreement)}
@@ -38,9 +38,7 @@ def get_sim_route_coords():
         return _sim_coords
     try:
         import pandas as pd
-        p = ROOT / "data/processed/route_stops.parquet"
-        if not p.exists():
-            p = ROOT / "data/demo/processed/route_stops.parquet"
+        p = resolve(load_config(), "processed") / "route_stops.parquet"
         if p.exists():
             df = pd.read_parquet(p)
             route_counts = df.groupby("route_short").size().sort_values(ascending=False)
@@ -126,67 +124,67 @@ def generate_simulated_vehicles(now: float):
     return vehicles
 
 
+def _unavailable(now):
+    return {"source": "Live GPS unavailable", "available": False, "synthetic": False,
+            "feed_timestamp": None, "fetched_at": int(now), "vehicles": []}
+
+
 def get_vehicles():
     global _cache, _fetched
-    with _lock:
-        now = time.time()
-        if _cache is not None and now - _fetched < 1.0:
+    now = time.time()
+    if _cache is not None and now - _fetched < 30:
+        return _cache
+    # One upstream fetch at a time; other callers never queue behind a timeout.
+    if not _lock.acquire(blocking=False):
+        return _unavailable(now)
+    try:
+        if _cache is not None and now - _fetched < 30:
             return _cache
-
+        result = _unavailable(now)
         key = os.getenv("TRANSPORTSTACK_API_KEY", "").strip()
         if key:
             try:
-                response = httpx.get(URL, headers={"x-api-key": key}, timeout=10, follow_redirects=False)
-                if response.status_code == 200:
-                    feed = gtfs_realtime_pb2.FeedMessage()
-                    feed.ParseFromString(response.content)
-                    if feed.IsInitialized():
-                        vehicles = []
-                        for entity in feed.entity:
-                            if not entity.HasField("vehicle") or not entity.vehicle.HasField("position"):
-                                continue
-                            v = entity.vehicle
-                            lat, lon = v.position.latitude, v.position.longitude
-                            if not (-90 <= lat <= 90 and -180 <= lon <= 180):
-                                continue
-                            timestamp = int(v.timestamp) if v.HasField("timestamp") else None
-                            age = int(now - timestamp) if timestamp else None
-                            r_id = v.trip.route_id or ""
-                            vehicles.append({
-                                "id": v.vehicle.id or entity.id,
-                                "route_id": r_id,
-                                "display_route": clean_route_name(r_id),
-                                "trip_id": v.trip.trip_id,
-                                "lat": lat,
-                                "lon": lon,
-                                "timestamp": timestamp,
-                                "stale": age is None or age > 300 or age < -60,
-                                "bearing": v.position.bearing if v.position.HasField("bearing") else None,
-                                "bus_type": vehicle_types().get(re.sub(r"[^A-Z0-9]", "", (v.vehicle.id or entity.id).upper()), {}).get("type", "unknown"),
-                                "bus_type_basis": "October 2026 tickets; not current fleet verification"
-                            })
-                        if vehicles:
-                            _cache = {
-                                "source": "Delhi Transport Stack (Live GTFS-RT)",
-                                "synthetic": False,
-                                "feed_timestamp": int(feed.header.timestamp),
-                                "fetched_at": int(now),
-                                "vehicles": vehicles
-                            }
-                            _fetched = now
-                            return _cache
-            except Exception as e:
                 import logging
-                logging.getLogger("live").warning("Live GTFS-RT feed fetch failed: %s", e)
-
-        # Fallback to high-fidelity live simulated fleet
-        sim_vehicles = generate_simulated_vehicles(now)
-        _cache = {
-            "source": "Delhi Transport Stack (Live Fleet Simulation)",
-            "synthetic": True,
-            "feed_timestamp": int(now),
-            "fetched_at": int(now),
-            "vehicles": sim_vehicles
-        }
-        _fetched = now
-        return _cache
+                response = httpx.get(os.getenv("TRANSPORTSTACK_VEHICLE_URL", URL),
+                                     headers={"x-api-key": key}, timeout=10, follow_redirects=False)
+                response.raise_for_status()
+                feed = gtfs_realtime_pb2.FeedMessage()
+                feed.ParseFromString(response.content)
+                if not feed.IsInitialized():
+                    raise ValueError("Incomplete GTFS-RT feed")
+                from src.transit import tables
+                _, routes, _ = tables()
+                names = dict(zip(routes.route_id, routes.route_short_name))
+                vehicles = []
+                for entity in feed.entity:
+                    if not entity.HasField("vehicle") or not entity.vehicle.HasField("position"):
+                        continue
+                    v = entity.vehicle
+                    lat, lon = v.position.latitude, v.position.longitude
+                    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                        continue
+                    timestamp = int(v.timestamp) if v.HasField("timestamp") else None
+                    age = now - timestamp if timestamp else None
+                    rid = v.trip.route_id or ""
+                    vid = v.vehicle.id or entity.id
+                    vehicles.append({"id": vid, "route_id": rid,
+                        "display_route": clean_route_name(names.get(rid, rid)), "trip_id": v.trip.trip_id,
+                        "lat": lat, "lon": lon, "timestamp": timestamp,
+                        "stale": age is None or age > 300 or age < -60,
+                        "bearing": v.position.bearing if v.position.HasField("bearing") else None,
+                        "bus_type": vehicle_types().get(re.sub(r"[^A-Z0-9]", "", vid.upper()), {}).get("type", "unknown"),
+                        "bus_type_basis": "Historical tickets; not current fleet verification"})
+                result = {"source": "Delhi Transport Stack (Live GTFS-RT)", "available": True,
+                          "synthetic": False, "feed_timestamp": int(feed.header.timestamp),
+                          "fetched_at": int(now), "vehicles": vehicles}
+            except Exception as exc:
+                import logging
+                logging.getLogger("live").warning("Live feed unavailable (%s)", type(exc).__name__)
+        elif load_config().get("synthetic", False):
+            result = {"source": "Synthetic demo fleet", "available": True, "synthetic": True,
+                      "feed_timestamp": int(now), "fetched_at": int(now),
+                      "vehicles": generate_simulated_vehicles(now)}
+        _cache, _fetched = result, now
+        return result
+    finally:
+        _lock.release()

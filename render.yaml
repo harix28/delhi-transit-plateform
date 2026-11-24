@@ -1,12 +1,13 @@
 services:
   - type: web
     name: delhi-transit-platform
-    env: python
+    runtime: python
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn src.api.main:app --host 0.0.0.0 --port $PORT
+    buildCommand: pip install -r requirements.txt && python scripts/prepare_deploy.py
+    startCommand: python -m uvicorn src.api.main:app --host 0.0.0.0 --port $PORT --workers 1
+    healthCheckPath: /health
     envVars:
       - key: TRANSIT_CONFIG
         value: config.yaml
       - key: PYTHON_VERSION
-        value: 3.11.9
+        value: 3.12.14

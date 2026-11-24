@@ -4,7 +4,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport"
-    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -13,10 +13,11 @@
   <title>Delhi Transit · Your city, connected</title>
   <meta name="description" content="Plan Delhi bus journeys, find nearby stops and follow live bus positions.">
   <link rel="manifest" href="/manifest.json">
-  <link rel="icon" type="image/svg+xml" href="/assets/icon.svg?v=20261124-1">
-  <link rel="apple-touch-icon" href="/assets/icon.svg?v=20261124-1">
-  <link rel="stylesheet" href="/assets/styles.css?v=20261124-5">
-  <link rel="stylesheet" href="/assets/redesign.css?v=20261124-5">
+  <link rel="icon" type="image/svg+xml" href="/assets/icon.svg?v=20261124-fix1">
+  <link rel="apple-touch-icon" href="/assets/icon.svg?v=20261124-fix1">
+  <link rel="stylesheet" href="/assets/styles.css?v=20261124-fix1">
+  <link rel="stylesheet" href="/assets/redesign.css?v=20261124-fix1">
+  <link rel="stylesheet" href="/assets/layout.css?v=20261124-fix1">
 </head>
 
 <body>
@@ -144,7 +145,7 @@
             <!-- Live Bus / Route Number Search Card -->
             <div class="bus-search-card" id="bus-search-card">
               <div class="bus-search-badge-row">
-                <span class="bus-search-badge">LIVE TRACKER</span>
+                <span class="bus-search-badge">BUS & ROUTE SEARCH</span>
                 <span class="bus-search-hint">Find bus or route</span>
               </div>
               <div class="bus-search-input-wrap">
@@ -242,7 +243,7 @@
                   <label for="journey-priority" class="planner-field-label">⚙️ ROUTING PRIORITY</label>
                   <select id="journey-priority" class="planner-priority-select" aria-label="Journey priority">
                     <option value="fastest" selected>⚡ Fastest Route (Minimum Travel Time)</option>
-                    <option value="comfortable">🛋️ Most Comfortable (Higher Seat Availability)</option>
+                    <option value="comfortable">🛋️ Most Comfortable (Historical Crowding)</option>
                   </select>
                 </div>
               </div>
@@ -314,6 +315,7 @@
           <p class="tracker-bus-reg" id="tracker-bus-reg">Live Bus Tracking</p>
         </div>
         <div class="tracker-header-actions">
+          <button type="button" id="close-tracker-btn" class="sheet-close" aria-label="Close route tracker">×</button>
           <button type="button" id="btn-tracker-split-map" class="btn-tracker-map-header" title="Toggle half-screen map view"
             aria-label="Toggle half-screen map view">
             <span id="tracker-map-btn-text">🗺️ Split Map</span>
@@ -357,8 +359,8 @@
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="/assets/rider.js?v=20261124-5" defer></script>
-  <script src="/assets/mobile-flow.js?v=20261124-5" defer></script>
+  <script src="/assets/rider.js?v=20261124-fix1" defer></script>
+  <script src="/assets/mobile-flow.js?v=20261124-fix1" defer></script>
   <dialog id="profile-dialog">
     <form method="dialog"><button class="close-profile" aria-label="Close profile">×</button></form>
     <div class="profile-avatar">♙</div>
@@ -432,6 +434,7 @@
   <section id="station-explorer-sheet" class="station-explorer-sheet" hidden aria-label="Station Explorer">
     <div class="sheet-drag-handle"></div>
     <div class="station-explorer-header">
+      <button type="button" id="btn-close-station-explorer" class="sheet-close" aria-label="Close departures">×</button>
       <div class="station-header-info">
         <div class="station-icon-tag">🚏 BUS STAND</div>
         <h2 id="station-explorer-title">Station Name</h2>

@@ -54,9 +54,8 @@ class JourneyPlanner:
 
         # Load route to shape_id mapping with minimal heap footprint using DictReader
         import csv
-        self.gtfs_raw = Path("data/raw/gtfs")
-        if not self.gtfs_raw.exists():
-            self.gtfs_raw = d.parent / "raw/gtfs"
+        from src.config import resolve
+        self.gtfs_raw = resolve(cfg, "raw") / "gtfs"
         self.route_shapes = {}
         trips_path = self.gtfs_raw / "trips.txt"
         if trips_path.exists():
@@ -188,15 +187,12 @@ class JourneyPlanner:
         return float(r.stop_lat), float(r.stop_lon)
 
     def near_stops(self, lat, lon, max_dist=None):
-        max_d = max_dist or self.cfg["journey"]["walk_max_m"]
-        hard_cap_m = 3000.0  # Strict maximum walking radius (3 km) to prevent out-of-coverage queries
+        max_d = min(max_dist if max_dist is not None else self.cfg["journey"]["walk_max_m"],
+                    self.cfg["journey"]["walk_max_m"])
         d = haversine_m(lat, lon, self.stops["stop_lat"].values, self.stops["stop_lon"].values)
         out = self.stops[["stop_id", "stop_name", "stop_lat", "stop_lon"]].copy()
         out["walk_m"] = d
         filtered = out[out["walk_m"] <= max_d]
-        if filtered.empty:
-            capped = out[out["walk_m"] <= hard_cap_m]
-            return capped.sort_values("walk_m").head(10)
         return filtered.sort_values("walk_m").head(25)
 
     def crowding_for(self, route_id, direction, day, half_hour, seq_b, seq_a):
@@ -235,8 +231,6 @@ class JourneyPlanner:
         c = board.merge(alight, on=["route_id", "direction_id"], suffixes=("_b", "_a"))
         c = c[c["seq_b"] < c["seq_a"]].copy()
         if c.empty:
-            if max_walk_m is None and j.get("walk_max_m", 800) < 1500:
-                return self.plan(origin, dest, depart, mode=mode, n=n, max_walk_m=1500)
             return []
         c["walk_total"] = c["walk_m_b"] + c["walk_m_a"]
         c = c.sort_values("walk_total").drop_duplicates(["route_id", "direction_id"])
@@ -256,8 +250,9 @@ class JourneyPlanner:
             scheduled = None
             if self.schedule:
                 scheduled = self.schedule.next_trip(r.route_id, r.stop_id_b, r.stop_id_a, depart, r.walk_m_b / walk_per_min)
-                if scheduled is not None:
-                    wait, ride = scheduled["wait"], scheduled["ride"]
+                if scheduled is None:
+                    continue
+                wait, ride = scheduled["wait"], scheduled["ride"]
 
             dep_dt = None
             if scheduled and scheduled.get("departure"):
@@ -292,7 +287,7 @@ class JourneyPlanner:
             options.append({
                 "route": getattr(r, "route_short_b", getattr(r, "route_short_name", "")),
                 "route_id": str(r.route_id),
-                "time_basis": "GTFS schedule departure" if (scheduled and scheduled.get("departure")) else "Route headway baseline",
+                "time_basis": "GTFS schedule departure" if scheduled else "Estimated timing; timetable unavailable",
                 "scheduled_departure": scheduled["departure"] if scheduled else None,
                 "direction": int(r.direction_id),
                 "total_min": round(walk + wait + ride, 1),
@@ -355,8 +350,9 @@ class JourneyPlanner:
         sid_a = stop_id_a or a_row.stop_id
         if self.schedule:
             scheduled = self.schedule.next_trip(route_id, sid_b, sid_a, depart, walk_m_b / walk_per_min)
-            if scheduled is not None:
-                wait, ride = scheduled["wait"], scheduled["ride"]
+            if scheduled is None:
+                return None
+            wait, ride = scheduled["wait"], scheduled["ride"]
 
         dep_dt = None
         if scheduled and scheduled.get("departure"):
@@ -388,7 +384,7 @@ class JourneyPlanner:
         return {
             "route": route_short,
             "route_id": str(route_id),
-            "time_basis": "GTFS schedule departure" if (scheduled and scheduled.get("departure")) else "Route headway baseline",
+            "time_basis": "GTFS schedule departure" if scheduled else "Estimated timing; timetable unavailable",
             "scheduled_departure": scheduled["departure"] if scheduled else None,
             "direction": int(direction_id),
             "total_min": round(walk + wait + ride, 1),
@@ -421,8 +417,6 @@ class JourneyPlanner:
         # 1. Direct Service (transfers = 0)
         direct = self.plan(origin, dest, depart, mode, n)
         results = [dict(o, transfers=0) for o in direct]
-        if len(results) >= n:
-            return results[:n]
 
         seen_route_pairs = {o["route"] for o in results}
         seen_keys = set()
@@ -464,10 +458,8 @@ class JourneyPlanner:
             return True
 
         # 2. Vectorized 1-Transfer via Connecting Stops
-        search_radii = [1200, 2500]
+        search_radii = [self.cfg["journey"]["walk_max_m"]]
         for rad in search_radii:
-            if len(results) >= n:
-                break
             o_stops = self.near_stops(*origin, max_dist=rad)
             d_stops = self.near_stops(*dest, max_dist=rad)
             if o_stops.empty or d_stops.empty:
@@ -523,6 +515,11 @@ class JourneyPlanner:
             if len(results) < n and "stop_norm" in self.rs.columns:
                 transfers_norm = downstream.merge(upstream, on="stop_norm", suffixes=("_1", "_2"))
                 transfers_norm = transfers_norm[transfers_norm["route_id_1"] != transfers_norm["route_id_2"]]
+                # Equal names can belong to opposite platforms or distant stops.
+                transfers_norm = transfers_norm[
+                    haversine_m(transfers_norm.stop_lat_1, transfers_norm.stop_lon_1,
+                                transfers_norm.stop_lat_2, transfers_norm.stop_lon_2) <= 1.0
+                ]
                 if not transfers_norm.empty:
                     km1 = (transfers_norm["dist_m_1"] - transfers_norm["dist_m_b"]) / 1000
                     km2 = (transfers_norm["dist_m_a"] - transfers_norm["dist_m_2"]) / 1000
@@ -562,17 +559,6 @@ class JourneyPlanner:
                         if first["route_id"] == second["route_id"] or first["route"] == second["route"]:
                             continue
                         add_transfer_journey(first, second, hub["stop_name"], buffer_min=2, basis_note=f"Hub interchange at {hub['name']}")
-
-        # 4. Guaranteed Fallback: Force Nearest Available Stands
-        if not results:
-            d_from = haversine_m(origin[0], origin[1], self.stops.stop_lat.values, self.stops.stop_lon.values)
-            d_to = haversine_m(dest[0], dest[1], self.stops.stop_lat.values, self.stops.stop_lon.values)
-            o_wide = self.stops.assign(d=d_from).sort_values("d").head(10)
-            d_wide = self.stops.assign(d=d_to).sort_values("d").head(10)
-            nearest_o = (float(o_wide.iloc[0].stop_lat), float(o_wide.iloc[0].stop_lon))
-            nearest_d = (float(d_wide.iloc[0].stop_lat), float(d_wide.iloc[0].stop_lon))
-            fallback_opts = self.plan(nearest_o, nearest_d, depart, mode, n=n, max_walk_m=5000)
-            results = [dict(o, transfers=0) for o in fallback_opts]
 
         if mode == "fastest":
             results.sort(key=lambda x: x.get("total_min", 999))

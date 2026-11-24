@@ -90,7 +90,7 @@ def test_api_validation_and_frontend(client):
     assert len(client.get("/crowding/top?min_confidence=low").json()["items"]) == 4
     assert len(client.get("/network").json()["routes"]) == 2
     assert client.get("/stops?q=Alpha").json()["stops"][0]["stop_name"] == "Alpha"
-    assert "Delhi Transit Intelligence" in client.get("/").text
+    assert "Delhi Transit" in client.get("/").text
     assert client.get("/assets/app.js").status_code == 200
 
 
@@ -103,3 +103,30 @@ def test_missing_data_keeps_setup_screen_available(tmp_path, monkeypatch):
         assert client.get("/").status_code == 200
         assert client.get("/health").json()["ready"] is False
         assert query(client).status_code == 503
+
+
+def test_selected_dataset_is_respected(client):
+    health = client.get("/health").json()
+    assert health["synthetic"] is True
+    assert health["dataset"] == "Test fixture"
+    assert len(main.planner.stops) == 3
+
+
+def test_no_scheduled_service_is_not_replaced_by_estimates(client):
+    class NoService:
+        def next_trip(self, *args, **kwargs):
+            return None
+    main.planner.schedule = NoService()
+    assert query(client).json()["options"] == []
+    assert client.get("/transit/stops/A/departures").json()["departures"] == []
+
+
+def test_departures_without_timetable_and_unknown_stop(client):
+    result = client.get("/transit/stops/A/departures").json()
+    assert result["available"] is False
+    assert result["departures"] == []
+    assert client.get("/transit/stops/not-a-stop/departures").status_code == 404
+
+
+def test_out_of_coverage_origin_has_no_journey(client):
+    assert query(client, **{"from": "0,0"}).json()["options"] == []
