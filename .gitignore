@@ -16,3 +16,4 @@ data/raw/gtfs/shapes.txt
 data/processed/schedule.sqlite
 outputs/segment_load.csv
 outputs/holdout_comparison.csv
+

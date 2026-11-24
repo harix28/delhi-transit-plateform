@@ -37,7 +37,19 @@ def get_sim_route_coords():
             p = ROOT / "data/demo/processed/route_stops.parquet"
         if p.exists():
             df = pd.read_parquet(p)
-            top_routes = ['729UP', '729DOWN', '502UP', '502DOWN', '534AUP', '534ADOWN', '990UP', '419UP', '73UP', 'D1', 'D2', 'D3', 'D4']
+            route_counts = df.groupby("route_short").size().sort_values(ascending=False)
+            top_routes = list(route_counts.head(50).index)
+            must_have = [
+                'OMS(+)UP', 'OMS(-)DOWN', '729UP', '729DOWN', '502UP', '502DOWN',
+                '534AUP', '534ADOWN', '990UP', '419UP', '73UP', '708UP', '708DOWN',
+                '764UP', '764DOWN', '947AUP', '947ADOWN', '892UP', '892DOWN',
+                '817NUP', '817NDOWN', '106DOWN', '114DOWN', '119DOWN', '181DOWN',
+                '740CUP', '740CDOWN', '539UP', '539DOWN', '116UP', '116DOWN',
+                'D1', 'D2', 'D3', 'D4'
+            ]
+            for r in must_have:
+                if r not in top_routes:
+                    top_routes.append(r)
             m = {}
             for r in top_routes:
                 sub = df[df.route_short.astype(str) == r].sort_values("seq")

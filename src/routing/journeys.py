@@ -57,13 +57,33 @@ class JourneyPlanner:
             except Exception:
                 pass
 
+        # Pre-resolve Major Delhi Transit Hubs for multi-hop fallback routing
+        HUB_NAMES = [
+            'Kashmere Gate', 'Anand Vihar', 'Sarai Kale Khan', 'Central Secretariat',
+            'Shivaji Stadium', 'AIIMS', 'Dhaula Kuan', 'Azadpur', 'Peera Garhi',
+            'Punjabi Bagh', 'Uttam Nagar', 'Nehru Place', 'Mehrauli', 'Jahangirpuri',
+            'Tilak Nagar', 'Lajpat Nagar', 'Badarpur', 'Rohini', 'Dwarka', 'Najafgarh'
+        ]
+        self.major_hubs = []
+        for hname in HUB_NAMES:
+            m = self.stops[self.stops["stop_name"].str.contains(hname, case=False, na=False)]
+            if not m.empty:
+                r = m.iloc[0]
+                self.major_hubs.append({
+                    "name": hname,
+                    "stop_name": r.stop_name,
+                    "lat": float(r.stop_lat),
+                    "lon": float(r.stop_lon)
+                })
+
     def get_road_geometry(self, route_id, direction_id, lat_b, lon_b, lat_a, lon_a, fallback_stops):
         """Slice real road shape points from shapes.parquet."""
         import numpy as np
+        shapes_map = getattr(self, "route_shapes", {})
         shp_id = (
-            self.route_shapes.get((str(route_id), str(direction_id)))
-            or self.route_shapes.get((str(route_id), "0"))
-            or self.route_shapes.get((str(route_id), ""))
+            shapes_map.get((str(route_id), str(direction_id)))
+            or shapes_map.get((str(route_id), "0"))
+            or shapes_map.get((str(route_id), ""))
         )
         if not shp_id:
             return fallback_stops
@@ -123,12 +143,15 @@ class JourneyPlanner:
         r = hit.iloc[0]
         return float(r.stop_lat), float(r.stop_lon)
 
-    def near_stops(self, lat, lon):
+    def near_stops(self, lat, lon, max_dist=None):
+        max_d = max_dist or self.cfg["journey"]["walk_max_m"]
         d = haversine_m(lat, lon, self.stops["stop_lat"].values, self.stops["stop_lon"].values)
-        out = self.stops[["stop_id"]].copy()
+        out = self.stops[["stop_id", "stop_name", "stop_lat", "stop_lon"]].copy()
         out["walk_m"] = d
-        out = out[out["walk_m"] <= self.cfg["journey"]["walk_max_m"]]
-        return out.sort_values("walk_m").head(15)
+        filtered = out[out["walk_m"] <= max_d]
+        if filtered.empty:
+            return out.sort_values("walk_m").head(10)
+        return filtered.sort_values("walk_m").head(25)
 
     def crowding_for(self, route_id, direction, day, half_hour, seq_b, seq_a):
         if self.crowd is None:
@@ -149,19 +172,22 @@ class JourneyPlanner:
         return levels, worst, conf
 
     # ---------- main ----------
-    def plan(self, origin, dest, depart: datetime, mode="fastest", n=3):
+    def plan(self, origin, dest, depart: datetime, mode="fastest", n=3, max_walk_m=None):
         j = self.cfg["journey"]
         day = "weekend" if depart.weekday() >= 5 else "weekday"
         hh = depart.hour * 2 + (1 if depart.minute >= 30 else 0)
 
-        o, d = self.near_stops(*origin), self.near_stops(*dest)
+        o = self.near_stops(*origin, max_dist=max_walk_m)
+        d = self.near_stops(*dest, max_dist=max_walk_m)
         if o.empty or d.empty:
             return []
-        board = self.rs.merge(o, on="stop_id")
-        alight = self.rs.merge(d, on="stop_id")
+        board = self.rs.merge(o[["stop_id", "walk_m"]], on="stop_id")
+        alight = self.rs.merge(d[["stop_id", "walk_m"]], on="stop_id")
         c = board.merge(alight, on=["route_id", "direction_id"], suffixes=("_b", "_a"))
         c = c[c["seq_b"] < c["seq_a"]].copy()
         if c.empty:
+            if max_walk_m is None and j.get("walk_max_m", 800) < 1500:
+                return self.plan(origin, dest, depart, mode=mode, n=n, max_walk_m=1500)
             return []
         c["walk_total"] = c["walk_m_b"] + c["walk_m_a"]
         c = c.sort_values("walk_total").drop_duplicates(["route_id", "direction_id"])
@@ -181,11 +207,20 @@ class JourneyPlanner:
             scheduled = None
             if self.schedule:
                 scheduled = self.schedule.next_trip(r.route_id, r.stop_id_b, r.stop_id_a, depart, r.walk_m_b / walk_per_min)
-                if scheduled is None:
-                    continue
-                wait, ride = scheduled["wait"], scheduled["ride"]
+                if scheduled is not None:
+                    wait, ride = scheduled["wait"], scheduled["ride"]
+
+            dep_dt = None
+            if scheduled and scheduled.get("departure"):
+                try:
+                    dep_dt = datetime.fromisoformat(scheduled["departure"])
+                except Exception:
+                    dep_dt = None
+            dep_day = ("weekend" if dep_dt.weekday() >= 5 else "weekday") if dep_dt else day
+            dep_hh = (dep_dt.hour * 2 + dep_dt.minute // 30) if dep_dt else hh
+
             levels, worst, conf = self.crowding_for(
-                r.route_id, r.direction_id, ("weekend" if datetime.fromisoformat(scheduled["departure"]).weekday() >= 5 else "weekday") if scheduled else day, (datetime.fromisoformat(scheduled["departure"]).hour * 2 + datetime.fromisoformat(scheduled["departure"]).minute // 30) if scheduled else hh, r.seq_b, r.seq_a
+                r.route_id, r.direction_id, dep_day, dep_hh, r.seq_b, r.seq_a
             )
             stops_rows = list(self.rs[
                 (self.rs["route_id"] == r.route_id)
@@ -208,7 +243,7 @@ class JourneyPlanner:
             options.append({
                 "route": getattr(r, "route_short_b", getattr(r, "route_short_name", "")),
                 "route_id": str(r.route_id),
-                "time_basis": "GTFS schedule, not live ETA" if scheduled else "route-speed baseline; fixed waiting assumption",
+                "time_basis": "GTFS schedule departure" if (scheduled and scheduled.get("departure")) else "Route headway baseline",
                 "scheduled_departure": scheduled["departure"] if scheduled else None,
                 "direction": int(r.direction_id),
                 "total_min": round(walk + wait + ride, 1),
@@ -238,55 +273,183 @@ class JourneyPlanner:
             options.sort(key=lambda x: x["total_min"])
         return options[:n]
 
-
     def plan_with_transfer(self, origin, dest, depart, mode="fastest", n=5):
+        # 1. Direct Service (transfers = 0)
         direct = self.plan(origin, dest, depart, mode, n)
-        if direct:
-            return [dict(o, transfers=0) for o in direct]
-        # Bounded same-stop interchange search; only used when no direct service is available.
-        origin_ids = set(self.near_stops(*origin).stop_id)
-        dest_ids = set(self.near_stops(*dest).stop_id)
-        reachable, preceding = set(), set()
-        for _, g in self.rs.groupby(["route_id", "direction_id"]):
-            b = g[g.stop_id.isin(origin_ids)]
-            a = g[g.stop_id.isin(dest_ids)]
-            if not b.empty:
-                reachable.update(g.loc[g.seq > b.seq.min(), "stop_id"])
-            if not a.empty:
-                preceding.update(g.loc[g.seq < a.seq.max(), "stop_id"])
+        results = [dict(o, transfers=0) for o in direct]
+        if len(results) >= n:
+            return results[:n]
+
+        # 2. Single-Transfer via Overlapping Junction Stops
+        origin_stops = self.near_stops(*origin)
+        dest_stops = self.near_stops(*dest)
+        origin_ids = set(origin_stops.stop_id)
+        dest_ids = set(dest_stops.stop_id)
+
+        routes_b = self.rs[self.rs.stop_id.isin(origin_ids)][["route_id", "direction_id", "seq"]].groupby(["route_id", "direction_id"])["seq"].min().reset_index().rename(columns={"seq": "min_seq"})
+        routes_a = self.rs[self.rs.stop_id.isin(dest_ids)][["route_id", "direction_id", "seq"]].groupby(["route_id", "direction_id"])["seq"].max().reset_index().rename(columns={"seq": "max_seq"})
+
+        merged_b = self.rs[["route_id", "direction_id", "stop_id", "seq"]].merge(routes_b, on=["route_id", "direction_id"])
+        reachable = set(merged_b[merged_b["seq"] > merged_b["min_seq"]]["stop_id"])
+
+        merged_a = self.rs[["route_id", "direction_id", "stop_id", "seq"]].merge(routes_a, on=["route_id", "direction_id"])
+        preceding = set(merged_a[merged_a["seq"] < merged_a["max_seq"]]["stop_id"])
+
         transfers = self.stops[self.stops.stop_id.isin(reachable & preceding)].copy()
-        if transfers.empty:
-            return []
-        transfers["detour"] = haversine_m(origin[0],origin[1],transfers.stop_lat,transfers.stop_lon) + haversine_m(dest[0],dest[1],transfers.stop_lat,transfers.stop_lon)
-        results = []
-        seen = set()
-        for stop in transfers.sort_values("detour").head(8).itertuples():
-            point = (stop.stop_lat, stop.stop_lon)
-            for first in self.plan(origin, point, depart, mode, 2):
-                onward = depart + timedelta(minutes=first["total_min"] + 2)
-                for second in self.plan(point, dest, onward, mode, 2):
-                    if first["route_id"] == second["route_id"]:
+        seen = {o["route"] for o in results}
+        seen_keys = set()
+
+        if not transfers.empty:
+            transfers["detour"] = (
+                haversine_m(origin[0], origin[1], transfers.stop_lat, transfers.stop_lon)
+                + haversine_m(dest[0], dest[1], transfers.stop_lat, transfers.stop_lon)
+            )
+            for stop in transfers.sort_values("detour").head(25).itertuples():
+                if len(results) >= n + 2:
+                    break
+                point = (stop.stop_lat, stop.stop_lon)
+                first_legs = self.plan(origin, point, depart, mode, 2)
+                for first in first_legs:
+                    onward = depart + timedelta(minutes=first["total_min"] + 2)
+                    second_legs = self.plan(point, dest, onward, mode, 2)
+                    for second in second_legs:
+                        if first["route_id"] == second["route_id"] or first["route"] == second["route"]:
+                            continue
+                        route_name = f"{first['route']} + {second['route']}"
+                        key = (first["route_id"], second["route_id"], stop.stop_name)
+                        if key in seen_keys or route_name in seen:
+                            continue
+                        seen_keys.add(key)
+                        seen.add(route_name)
+
+                        levels = first["crowding_by_stretch"] + second["crowding_by_stretch"]
+                        worst = max([first["crowding"], second["crowding"]], key=lambda x: RANK[x])
+                        results.append({
+                            "route": route_name,
+                            "route_id": f"{first['route_id']}+{second['route_id']}",
+                            "total_min": round(first["total_min"] + second["total_min"] + 2, 1),
+                            "ride_min": round(first["ride_min"] + second["ride_min"], 1),
+                            "walk_min": round(first["walk_min"] + second["walk_min"], 1),
+                            "wait_min": round(first["wait_min"] + second["wait_min"], 1),
+                            "transfer_min": 2,
+                            "transfers": 1,
+                            "transfer_stop": stop.stop_name,
+                            "legs": [first, second],
+                            "board": first["board"],
+                            "alight": second["alight"],
+                            "stations": first.get("stations", []) + second.get("stations", []),
+                            "geometry": first.get("geometry", []) + second.get("geometry", []),
+                            "segments": first.get("segments", []) + second.get("segments", []),
+                            "crowding": worst,
+                            "confidence": min([first["confidence"], second["confidence"]], key=lambda x: CONF_RANK[x]),
+                            "crowding_by_stretch": levels,
+                            "crowding_coverage": round(sum(x != "unknown" for x in levels) / max(len(levels), 1), 3),
+                            "time_basis": f"{first['time_basis']} · 3-min interchange buffer at {stop.stop_name}",
+                        })
+
+        # 3. Hub-Based Single-Transfer Fallback (via Major Delhi Interchanges)
+        if len(results) < n and hasattr(self, "major_hubs") and self.major_hubs:
+            sorted_hubs = sorted(
+                self.major_hubs,
+                key=lambda h: haversine_m(origin[0], origin[1], h["lat"], h["lon"]) + haversine_m(dest[0], dest[1], h["lat"], h["lon"])
+            )
+            for hub in sorted_hubs[:8]:
+                if len(results) >= n:
+                    break
+                hub_pt = (hub["lat"], hub["lon"])
+                first_legs = self.plan(origin, hub_pt, depart, mode, 2)
+                for first in first_legs:
+                    onward = depart + timedelta(minutes=first["total_min"] + 4)
+                    second_legs = self.plan(hub_pt, dest, onward, mode, 2)
+                    for second in second_legs:
+                        if first["route_id"] == second["route_id"] or first["route"] == second["route"]:
+                            continue
+                        route_name = f"{first['route']} + {second['route']}"
+                        key = (first["route_id"], second["route_id"], hub["stop_name"])
+                        if key in seen_keys or route_name in seen:
+                            continue
+                        seen_keys.add(key)
+                        seen.add(route_name)
+
+                        levels = first["crowding_by_stretch"] + second["crowding_by_stretch"]
+                        worst = max([first["crowding"], second["crowding"]], key=lambda x: RANK[x])
+                        results.append({
+                            "route": route_name,
+                            "route_id": f"{first['route_id']}+{second['route_id']}",
+                            "total_min": round(first["total_min"] + second["total_min"] + 4, 1),
+                            "ride_min": round(first["ride_min"] + second["ride_min"], 1),
+                            "walk_min": round(first["walk_min"] + second["walk_min"], 1),
+                            "wait_min": round(first["wait_min"] + second["wait_min"], 1),
+                            "transfer_min": 4,
+                            "transfers": 1,
+                            "transfer_stop": hub["stop_name"],
+                            "legs": [first, second],
+                            "board": first["board"],
+                            "alight": second["alight"],
+                            "stations": first.get("stations", []) + second.get("stations", []),
+                            "geometry": first.get("geometry", []) + second.get("geometry", []),
+                            "segments": first.get("segments", []) + second.get("segments", []),
+                            "crowding": worst,
+                            "confidence": min([first["confidence"], second["confidence"]], key=lambda x: CONF_RANK[x]),
+                            "crowding_by_stretch": levels,
+                            "crowding_coverage": round(sum(x != "unknown" for x in levels) / max(len(levels), 1), 3),
+                            "time_basis": f"{first['time_basis']} · Hub interchange at {hub['name']}",
+                        })
+
+        # 4. Multi-Hop 2-Transfer Fallback (Hub 1 -> Hub 2 for extreme cross-city paths)
+        if not results and hasattr(self, "major_hubs") and self.major_hubs:
+            hubs_near_origin = sorted(self.major_hubs, key=lambda h: haversine_m(origin[0], origin[1], h["lat"], h["lon"]))[:4]
+            hubs_near_dest = sorted(self.major_hubs, key=lambda h: haversine_m(dest[0], dest[1], h["lat"], h["lon"]))[:4]
+            for h1 in hubs_near_origin:
+                if results:
+                    break
+                for h2 in hubs_near_dest:
+                    if h1["name"] == h2["name"]:
                         continue
-                    key = (first["route_id"],second["route_id"],first["alight"]["name"],second["board"]["name"])
-                    if key in seen:continue
-                    seen.add(key)
-                    levels = first["crowding_by_stretch"] + second["crowding_by_stretch"]
-                    worst = max([first["crowding"],second["crowding"]],key=lambda x:RANK[x])
+                    l1_opts = self.plan(origin, (h1["lat"], h1["lon"]), depart, mode, 1)
+                    if not l1_opts:
+                        continue
+                    l1 = l1_opts[0]
+                    t2 = depart + timedelta(minutes=l1["total_min"] + 3)
+                    l2_opts = self.plan((h1["lat"], h1["lon"]), (h2["lat"], h2["lon"]), t2, mode, 1)
+                    if not l2_opts:
+                        continue
+                    l2 = l2_opts[0]
+                    t3 = t2 + timedelta(minutes=l2["total_min"] + 3)
+                    l3_opts = self.plan((h2["lat"], h2["lon"]), dest, t3, mode, 1)
+                    if not l3_opts:
+                        continue
+                    l3 = l3_opts[0]
+
+                    route_name = f"{l1['route']} + {l2['route']} + {l3['route']}"
+                    levels = l1["crowding_by_stretch"] + l2["crowding_by_stretch"] + l3["crowding_by_stretch"]
+                    worst = max([l1["crowding"], l2["crowding"], l3["crowding"]], key=lambda x: RANK[x])
                     results.append({
-                        "route":first["route"]+" + "+second["route"], "route_id":first["route_id"],
-                        "total_min":round(first["total_min"]+second["total_min"]+2,1),
-                        "ride_min":round(first["ride_min"]+second["ride_min"],1),
-                        "walk_min":round(first["walk_min"]+second["walk_min"],1),
-                        "wait_min":round(first["wait_min"]+second["wait_min"],1),
-                        "transfer_min":2, "transfers":1, "transfer_stop":stop.stop_name,
-                        "legs":[first,second], "board":first["board"], "alight":second["alight"],
-                        "stations":first.get("stations", []) + second.get("stations", []),
-                        "geometry":first["geometry"]+second["geometry"],
-                        "segments":first.get("segments",[])+second.get("segments",[]),
-                        "crowding":worst, "confidence":min([first["confidence"],second["confidence"]],key=lambda x:CONF_RANK[x]),
-                        "crowding_by_stretch":levels,
-                        "crowding_coverage":sum(x!="unknown" for x in levels)/max(len(levels),1),
-                        "time_basis":first["time_basis"]+"; two-minute transfer buffer; straight-line access walks",
+                        "route": route_name,
+                        "route_id": f"{l1['route_id']}+{l2['route_id']}+{l3['route_id']}",
+                        "total_min": round(l1["total_min"] + l2["total_min"] + l3["total_min"] + 6, 1),
+                        "ride_min": round(l1["ride_min"] + l2["ride_min"] + l3["ride_min"], 1),
+                        "walk_min": round(l1["walk_min"] + l2["walk_min"] + l3["walk_min"], 1),
+                        "wait_min": round(l1["wait_min"] + l2["wait_min"] + l3["wait_min"], 1),
+                        "transfer_min": 6,
+                        "transfers": 2,
+                        "transfer_stop": f"{h1['stop_name']} & {h2['stop_name']}",
+                        "legs": [l1, l2, l3],
+                        "board": l1["board"],
+                        "alight": l3["alight"],
+                        "stations": l1.get("stations", []) + l2.get("stations", []) + l3.get("stations", []),
+                        "geometry": l1.get("geometry", []) + l2.get("geometry", []) + l3.get("geometry", []),
+                        "segments": l1.get("segments", []) + l2.get("segments", []) + l3.get("segments", []),
+                        "crowding": worst,
+                        "confidence": min([l1["confidence"], l2["confidence"], l3["confidence"]], key=lambda x: CONF_RANK[x]),
+                        "crowding_by_stretch": levels,
+                        "crowding_coverage": round(sum(x != "unknown" for x in levels) / max(len(levels), 1), 3),
+                        "time_basis": f"2-transfer transit corridor via {h1['name']} and {h2['name']}",
                     })
-        results.sort(key=(lambda x:(RANK[x["crowding"]],x["total_min"])) if mode=="comfortable" else (lambda x:x["total_min"]))
+                    break
+
+        if mode == "comfortable":
+            results.sort(key=lambda x: (x.get("transfers", 0), RANK[x["crowding"]], x["total_min"]))
+        else:
+            results.sort(key=lambda x: (x.get("transfers", 0), x["total_min"]))
         return results[:n]

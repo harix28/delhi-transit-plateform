@@ -465,7 +465,7 @@ function startAutoTrackerPolling() {
         if (found) currentTrackedVehicle = found;
       }
       await openBusTracker(currentTrackedVehicle, currentTrackedRouteId, currentTrackedRouteName, currentTrackedSegments, true);
-    } catch (_) {}
+    } catch (_) { }
   }, 12000);
 }
 
@@ -582,7 +582,7 @@ function openDigitalTicket(routeCode, fromStop, toStop, fareObj, isAC) {
   safeSetText('ticket-bus-type-tag', isAC ? '❄ Electric AC Bus' : 'Standard Non-AC Bus');
   safeSetText('ticket-from-stop', fromStop || 'Boarding Stop');
   safeSetText('ticket-to-stop', toStop || 'Destination Stop');
-  
+
   const initialFare = isAC ? fareObj.ac : fareObj.standard;
   safeSetText('ticket-fare-val', '₹' + initialFare);
   safeSetText('ticket-booking-time', new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ', Today');
@@ -612,101 +612,6 @@ if (saveTicketCloseBtn) saveTicketCloseBtn.onclick = () => $('digital-ticket-mod
 
 // -------------------------------------------------------------
 // Active Ride Mode & Alighting Alerts
-// -------------------------------------------------------------
-let activeRide = null;
-let rideWatchId = null;
-let hasAlertedAlighting = false;
-
-function playAlightingChime() {
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
-    osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.15); // A5
-    gain.gain.setValueAtTime(0.3, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.6);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + 0.65);
-  } catch (_) {}
-}
-
-function startRideMode(journeyOption) {
-  activeRide = journeyOption;
-  hasAlertedAlighting = false;
-  const banner = $('active-ride-banner');
-  if (banner) banner.hidden = false;
-
-  safeSetText('ride-banner-title', `🚍 On Route ${journeyOption.route}`);
-  safeSetText('ride-banner-status', `Heading to ${journeyOption.alight.name}`);
-
-  if (navigator.geolocation) {
-    if (rideWatchId !== null) navigator.geolocation.clearWatch(rideWatchId);
-    rideWatchId = navigator.geolocation.watchPosition(pos => {
-      if (!activeRide) return;
-      const userLat = pos.coords.latitude;
-      const userLon = pos.coords.longitude;
-      const destLat = activeRide.alight.lat;
-      const destLon = activeRide.alight.lon;
-
-      const distM = haversineM(userLat, userLon, destLat, destLon);
-      const distLabel = distM < 1000 ? Math.round(distM) + 'm' : (distM / 1000).toFixed(1) + ' km';
-      safeSetText('ride-banner-status', `~${distLabel} to ${activeRide.alight.name}`);
-
-      // Alighting alert threshold: within 800m of destination
-      if (distM <= 800 && !hasAlertedAlighting) {
-        hasAlertedAlighting = true;
-        triggerAlightingAlert(activeRide.alight.name, Math.round(distM));
-      }
-    }, () => {}, { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 });
-  }
-}
-
-function triggerAlightingAlert(stopName, distM) {
-  if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 500]);
-  playAlightingChime();
-
-  const overlay = $('alighting-alert-overlay');
-  if (overlay) {
-    safeSetText('alighting-stop-name', `Approaching ${stopName}`);
-    safeSetText('alighting-dist-badge', `~${distM}m away`);
-    overlay.hidden = false;
-  }
-}
-
-function exitRideMode() {
-  activeRide = null;
-  if (rideWatchId !== null) {
-    navigator.geolocation.clearWatch(rideWatchId);
-    rideWatchId = null;
-  }
-  const banner = $('active-ride-banner');
-  if (banner) banner.hidden = true;
-}
-
-const exitRideBtn = $('btn-exit-ride');
-if (exitRideBtn) exitRideBtn.onclick = exitRideMode;
-
-const rideMapBtn = $('btn-ride-map');
-if (rideMapBtn) {
-  rideMapBtn.onclick = () => {
-    if (activeRide && typeof showRouteOnMapGlobal === 'function') {
-      showRouteOnMapGlobal(activeRide);
-    }
-  };
-}
-
-const dismissAlightBtn = $('btn-dismiss-alight-alert');
-if (dismissAlightBtn) {
-  dismissAlightBtn.onclick = () => {
-    const overlay = $('alighting-alert-overlay');
-    if (overlay) overlay.hidden = true;
-  };
-}
-
 // Live Bus & Route Number Search Controller
 const busSearchInput = $('bus-route-search');
 const clearBusSearchBtn = $('clear-bus-route-search');
@@ -853,6 +758,19 @@ const activeBusMarkers = new Map();
 function paint() {
   const bounds = map.getBounds();
   const zoom = map.getZoom();
+
+  const filterBar = $('active-route-filter-bar');
+  if (filterBar) {
+    if (filter) {
+      filterBar.hidden = false;
+      const count = vehicles.filter(v => v.route_id === filter).length;
+      const filterText = $('filter-bar-text');
+      if (filterText) filterText.textContent = `Route ${filter} (${count} live bus${count === 1 ? '' : 'es'})`;
+    } else {
+      filterBar.hidden = true;
+    }
+  }
+
   const fresh = vehicles.filter(v => !v.stale && (activeBusType === 'all' || v.bus_type === activeBusType) && (!filter || v.route_id === filter));
   const visibleIds = new Set();
 
@@ -932,6 +850,14 @@ async function refresh() {
   }
 }
 map.on('moveend', paint);
+const clearFilterBtn = $('btn-clear-map-filter');
+if (clearFilterBtn) {
+  clearFilterBtn.onclick = () => {
+    filter = null;
+    paths.clearLayers();
+    paint();
+  };
+}
 
 async function nearby(lat, lon) {
   const id = ++sequence;
@@ -1341,7 +1267,15 @@ planButton.onclick = async () => {
     const d = await get('/journeys?' + new URLSearchParams({ from: origin, to: dest, mode: priority.value, ...($('rider-departure').value ? { depart: $('rider-departure').value } : {}) }));
     journeyOutput.replaceChildren();
     if (!d.options || !d.options.length) {
-      journeyOutput.append(element('p', 'No direct or single-transfer journey found. Try nearby stops or adjusting your departure time.'));
+      const emptyCard = element('div', '');
+      emptyCard.className = 'planner-no-results-card';
+      emptyCard.innerHTML = `
+        <div class="no-results-icon">🧭</div>
+        <h3>No direct or transfer journey found</h3>
+        <p>Try searching from a nearby major bus stand (e.g. Kashmere Gate, Anand Vihar, Dhaula Kuan, Rajiv Chowk) or adjust your departure time.</p>
+        <button type="button" class="btn-retry-nearby" onclick="$('rider-departure').value=''; $('plan-btn').click();">Reset departure time & search again</button>
+      `;
+      journeyOutput.append(emptyCard);
       return;
     }
     d.options.forEach((o, idx) => {
@@ -1432,11 +1366,38 @@ planButton.onclick = async () => {
       const crowdLabel = o.crowding === 'seats' ? 'Seats likely' : (o.crowding === 'standing' ? 'Standing room' : 'High crowding');
       const crowdClass = o.crowding || 'seats';
 
+      // Multi-leg breakdown HTML
+      let legsHtml = '';
+      if (o.legs && o.legs.length > 1) {
+        legsHtml = `
+          <div class="smart-legs-breakdown">
+            ${o.legs.map((leg, lIdx) => `
+              <div class="smart-leg-item">
+                <div class="leg-step-badge">Leg ${lIdx + 1}</div>
+                <div class="leg-step-info">
+                  <div class="leg-step-route">🚌 Route <strong>${leg.route}</strong> <span class="leg-time">${leg.ride_min} min ride</span></div>
+                  <div class="leg-step-stops">${leg.board.name} ➔ ${leg.alight.name} (${leg.stops} stops)</div>
+                </div>
+              </div>
+              ${lIdx < o.legs.length - 1 ? `
+                <div class="leg-transfer-divider">
+                  <span>🔁 Transfer at <strong>${o.legs[lIdx].alight.name}</strong> · ~${o.transfer_min || 3} min buffer</span>
+                </div>
+              ` : ''}
+            `).join('')}
+          </div>
+        `;
+      }
+
+      const transferPillHtml = o.transfers
+        ? `<span class="transfer-pill ${o.transfers > 1 ? 'multi' : ''}">${o.transfers} transfer${o.transfers > 1 ? 's' : ''}</span>`
+        : `<span class="direct-pill">Direct Bus</span>`;
+
       html += `
         <div class="smart-journey-header">
           <div class="route-badge-wrap">
             <span class="smart-route-badge">${o.route}</span>
-            ${o.transfers ? `<span class="transfer-pill">1 transfer</span>` : ''}
+            ${transferPillHtml}
           </div>
           <div class="smart-duration">
             <span class="num">${o.total_min}</span><small>min</small>
@@ -1455,7 +1416,8 @@ planButton.onclick = async () => {
           <span class="smart-chip">🚌 ${o.ride_min}m ride</span>
           <span class="smart-crowd-chip ${crowdClass}">● ${crowdLabel}</span>
         </div>
-        ${o.transfers && o.transfer_stop ? `<div class="smart-transfer-info">🔁 Change bus at <strong>${o.transfer_stop}</strong> · ~${o.transfer_min} min buffer</div>` : ''}
+        ${o.transfers && o.transfer_stop && (!o.legs || o.legs.length <= 1) ? `<div class="smart-transfer-info">🔁 Change bus at <strong>${o.transfer_stop}</strong> · ~${o.transfer_min} min buffer</div>` : ''}
+        ${legsHtml}
         ${fleetPreviewHtml}
         <div class="journey-fare-row">
           <div class="fare-pills-wrap">
@@ -1618,14 +1580,6 @@ planButton.onclick = async () => {
         getTicketBtn.onclick = (e) => {
           e.stopPropagation();
           openDigitalTicket(o.route, o.board.name, o.alight.name, fareObj, activeBusType === 'ac');
-        };
-      }
-      const startRideCardBtn = card.querySelector('.btn-start-ride-card');
-      if (startRideCardBtn) {
-        startRideCardBtn.onclick = (e) => {
-          e.stopPropagation();
-          startRideMode(o);
-          showRouteOnMap(null);
         };
       }
       showRouteOnMapGlobal = showRouteOnMap;
