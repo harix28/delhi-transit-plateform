@@ -27,12 +27,14 @@ IST = ZoneInfo("Asia/Kolkata")
 async def lifespan(app):
     global planner, startup_error, cfg
     try:
-        primary_cfg_path = ROOT / "config.yaml"
-        if primary_cfg_path.exists() and (ROOT / "data/processed/stops.parquet").exists():
+        prod_processed = ROOT / "data/processed"
+        if (prod_processed / "stops.parquet").exists() and (prod_processed / "route_stops.parquet").exists():
             cfg.clear()
-            cfg.update(load_config(primary_cfg_path))
-        planner = JourneyPlanner(resolve(cfg, "processed"), cfg)
-        logging.info("Delhi Transit Intelligence planner active with %d stops.", len(planner.stops))
+            cfg.update(load_config(ROOT / "config.yaml"))
+            planner = JourneyPlanner(prod_processed, cfg)
+            logging.info("Full Delhi transit network active with %d stops.", len(planner.stops))
+        else:
+            planner = JourneyPlanner(resolve(cfg, "processed"), cfg)
     except Exception as exc:
         startup_error = str(exc)
         logging.warning("Planner initial load failed: %s. Initiating automatic fallback...", exc)
@@ -63,16 +65,14 @@ app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET"],
 def init_planner():
     global planner, startup_error, cfg
     try:
-        primary_cfg_path = ROOT / "config.yaml"
-        if primary_cfg_path.exists() and (ROOT / "data/processed/stops.parquet").exists():
+        prod_processed = ROOT / "data/processed"
+        if (prod_processed / "stops.parquet").exists() and (prod_processed / "route_stops.parquet").exists():
             cfg.clear()
-            cfg.update(load_config(primary_cfg_path))
-            proc = resolve(cfg, "processed")
-            if proc.exists() and (proc / "stops.parquet").exists():
-                planner = JourneyPlanner(proc, cfg)
-                startup_error = None
-                logging.info("Primary Delhi transit dataset active (%d stops).", len(planner.stops))
-                return planner
+            cfg.update(load_config(ROOT / "config.yaml"))
+            planner = JourneyPlanner(prod_processed, cfg)
+            startup_error = None
+            logging.info("Primary Delhi transit dataset active (%d stops).", len(planner.stops))
+            return planner
     except Exception as exc:
         logging.warning("Primary planner init failed: %s", exc)
 
